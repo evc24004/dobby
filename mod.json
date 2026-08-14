@@ -2,7 +2,7 @@
   "arch": "arm64-v8a",
   "metadata": {
     "name": "Dobby",
-    "description": "Minecraft Bedrock developer client for packet, ESP, network, and chunk diagnostics.",
+    "description": "Minecraft Bedrock developer client with a protocol dumper, packet diagnostics, ESP, and passive network metrics.",
     "url": "https://github.com/evc24004/dobby",
     "image": "",
     "versions": [

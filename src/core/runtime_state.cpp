@@ -57,7 +57,6 @@ RuntimeState::RuntimeState()
             .oreEsp = true,
             .networkMetricsOverlay = true,
             .packetTrafficOverlay = true,
-            .capeTestPackets = false,
     });
     autoPopup_.store(preferences.autoPopup, std::memory_order_relaxed);
     std::uint8_t espMask = 0;
@@ -69,8 +68,6 @@ RuntimeState::RuntimeState()
             preferences.networkMetricsOverlay, std::memory_order_relaxed);
     packetTrafficOverlay_.store(
             preferences.packetTrafficOverlay, std::memory_order_relaxed);
-    capeTestPackets_.store(
-            preferences.capeTestPackets, std::memory_order_relaxed);
 }
 
 void RuntimeState::setHookStatus(std::string status, bool warningHook, bool streamProbe) {
@@ -215,23 +212,6 @@ void RuntimeState::setPacketTrafficAvailable(bool available) {
     packetTrafficAvailable_.store(available, std::memory_order_relaxed);
 }
 
-bool RuntimeState::capeTestPackets() const {
-    return capeTestPackets_.load(std::memory_order_relaxed);
-}
-
-bool RuntimeState::toggleCapeTestPackets() {
-    return !capeTestPackets_.exchange(
-            !capeTestPackets(), std::memory_order_relaxed);
-}
-
-bool RuntimeState::capeTestPacketsAvailable() const {
-    return capeTestPacketsAvailable_.load(std::memory_order_relaxed);
-}
-
-void RuntimeState::setCapeTestPacketsAvailable(bool available) {
-    capeTestPacketsAvailable_.store(available, std::memory_order_relaxed);
-}
-
 DeveloperPreferences RuntimeState::developerPreferences() const {
     return {
             .autoPopup = autoPopup(),
@@ -240,7 +220,6 @@ DeveloperPreferences RuntimeState::developerPreferences() const {
             .oreEsp = oreEsp(),
             .networkMetricsOverlay = networkMetricsOverlay(),
             .packetTrafficOverlay = packetTrafficOverlay(),
-            .capeTestPackets = capeTestPackets(),
     };
 }
 

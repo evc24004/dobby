@@ -56,10 +56,6 @@ public:
     bool togglePacketTrafficOverlay();
     bool packetTrafficAvailable() const;
     void setPacketTrafficAvailable(bool available);
-    bool capeTestPackets() const;
-    bool toggleCapeTestPackets();
-    bool capeTestPacketsAvailable() const;
-    void setCapeTestPacketsAvailable(bool available);
     DeveloperPreferences developerPreferences() const;
 
 private:
@@ -77,8 +73,6 @@ private:
     std::atomic_bool networkMetricsOverlay_{true};
     std::atomic_bool packetTrafficOverlay_{true};
     std::atomic_bool packetTrafficAvailable_{false};
-    std::atomic_bool capeTestPackets_{false};
-    std::atomic_bool capeTestPacketsAvailable_{false};
     std::atomic_size_t totalViolations_{0};
 };
 

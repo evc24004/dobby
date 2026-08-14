@@ -22,5 +22,11 @@ const std::string& eventPath();
 const std::string& latestPath();
 const std::string& clipboardPath();
 const std::string& preferencesPath();
+const std::string& protocolPath();
+const std::string& observedProtocolPath();
+const std::string& protocolVersionPath();
+const std::string& protocolStatusPath();
+const std::string& protocolReferencePath();
+const std::string& protocolVersionReferencePath();
 
 } // namespace dobby

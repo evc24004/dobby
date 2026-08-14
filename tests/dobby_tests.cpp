@@ -3,6 +3,7 @@
 #include "core/preferences.hpp"
 #include "core/runtime_state.hpp"
 #include "diagnostics/client_schema_trace.hpp"
+#include "diagnostics/protocol_dump.hpp"
 #include "diagnostics/report_builder.hpp"
 #include "diagnostics/stream_probe.hpp"
 #include "diagnostics/violation_decoder.hpp"
@@ -14,7 +15,6 @@
 #include "metrics/network_metrics.hpp"
 #include "metrics/packet_traffic.hpp"
 #include "platform/preferences_store.hpp"
-#include "platform/local_capes.hpp"
 #include "platform/safe_memory.hpp"
 #include "ui/chest_esp.hpp"
 #include "ui/entity_hitbox_overlay.hpp"
@@ -167,6 +167,73 @@ void testClientSchemaFieldTrace() {
     auto diagnostic = dobby::buildDiagnostic(
             {0, 2, 50, "read incomplete", "short"}, std::move(failure), "unit test");
     assert(diagnostic.json.find("\"client_field\":\"item.stackNetworkId\"") != std::string::npos);
+}
+
+void testProtocolDumpCompilation() {
+    require(dobby::protocolPacketName("SetTimePacket") == "set_time");
+    require(dobby::protocolPacketName("NPCDialoguePacket") == "npc_dialogue");
+    require(dobby::protocolPacketName("ClientboundDataDrivenUIShowScreenPacket") ==
+            "clientbound_data_driven_ui_show_screen");
+
+    dobby::ProtocolDumpObservation dump{
+            "1.26.40.5", "test-build", 2168, 351,
+            {
+                    {10,
+                     "SetTimePacket",
+                     0,
+                     true,
+                     true,
+                     {},
+                     {{"time", "zigzag32"}}},
+                    {11,
+                     "StartGamePacket",
+                     5,
+                     true,
+                     false,
+                     "default_collection_does_not_prove_element_schema",
+                     {{"level_settings.seed", "lu64"}}},
+                    {300,
+                     "CameraInstructionPacket",
+                     5,
+                     false,
+                     false,
+                     "write_failed",
+                     {}},
+            }};
+
+    const auto protocol = dobby::buildProtocolJson(dump);
+    require(protocol.find("\"10\": \"set_time\"") != std::string::npos);
+    require(protocol.find("\"set_time\": \"packet_set_time\"") !=
+            std::string::npos);
+    require(protocol.find("\"packet_set_time\"") != std::string::npos);
+    require(protocol.find("\"name\":\"time\",\"type\":\"zigzag32\"") !=
+            std::string::npos);
+    require(protocol.find("\"packet_start_game\"") != std::string::npos);
+    require(protocol.find("\"name\":\"unresolved\",\"type\":\"restBuffer\"") !=
+            std::string::npos);
+
+    const auto version = dobby::buildProtocolVersionJson(dump);
+    require(version.find("\"version\": 2168") != std::string::npos);
+    require(version.find("\"minecraftVersion\": \"1.26.40\"") !=
+            std::string::npos);
+    require(version.find("\"majorVersion\": \"1.26\"") !=
+            std::string::npos);
+
+    const auto status = dobby::buildProtocolStatusJson(dump, false);
+    require(status.find("\"factory_packets\": 3") != std::string::npos);
+    require(status.find("\"serialized_packets\": 2") != std::string::npos);
+    require(status.find("\"branch_free_observed_packets\": 1") !=
+            std::string::npos);
+    require(status.find("\"reference_packets\": 244") != std::string::npos);
+    require(status.find("\"complete_packets\": 0") != std::string::npos);
+    require(status.find("\"reference_verified\": false") != std::string::npos);
+    const auto verifiedStatus = dobby::buildProtocolStatusJson(dump, true);
+    require(verifiedStatus.find("\"complete_packets\": 244") !=
+            std::string::npos);
+    require(verifiedStatus.find("\"reference_verified\": true") !=
+            std::string::npos);
+    require(status.find("default_collection_does_not_prove_element_schema") !=
+            std::string::npos);
 }
 
 void testRepeatViolationsAreRetained() {
@@ -576,30 +643,6 @@ void testNetworkMetrics() {
     static_assert(dobby::target::kSubChunkDispatcherVtableSlotOffset == 0x120a3080);
     static_assert(dobby::target::kLoopbackSendOffset == 0x0c2de4a4);
     static_assert(dobby::target::kLoopbackSendVtableSlotOffset == 0x120a55a8);
-    static_assert(dobby::target::kPlayerSkinPacketId == 93);
-    static_assert(dobby::target::kPlayerSkinPacketVtableOffset == 0x120f7970);
-    static_assert(dobby::target::kPlayerSkinGetIdOffset == 0x0cfefb38);
-    static_assert(dobby::target::kPlayerSkinSerializedSkinRefOffset == 0x40);
-    static_assert(dobby::target::kSerializedSkinSetPersonaCapeOnClassicOffset ==
-                  0x0f0d15d0);
-    static_assert(dobby::target::kSerializedSkinSetPremiumOffset == 0x0f0d1a40);
-    static_assert(dobby::target::kSerializedSkinSetPersonaOffset == 0x0f0d1a58);
-    static_assert(dobby::target::kPersonaFeatureConstructorOffset == 0x0c641ed4);
-    static_assert(dobby::target::kPersonaBooleanFeatureVtableOffset ==
-                  0x120c3dd0);
-    static_assert(dobby::target::kPersonaRemoveOwnedChecksFeatureId == 27);
-    static_assert(dobby::target::kPersonaRepositoryVtableOffset == 0x11f6e438);
-    static_assert(dobby::target::kPersonaRepositoryLookupSlot == 12);
-    static_assert(dobby::target::kPersonaRepositoryOwnedPiecesSlot == 14);
-    static_assert(dobby::target::kPersonaRepositoryLookupOffset == 0x0a6f3b3c);
-    static_assert(dobby::target::kPersonaRepositoryOwnedPiecesOffset ==
-                  0x0a6f3b64);
-    static_assert(dobby::target::kPersonaManagerLookupOffset == 0x0a63bc10);
-    static_assert(dobby::target::kPersonaManagerInsertOffset == 0x0a63bc74);
-    static_assert(dobby::target::kPersonaManagerMutexOffset == 0x1f8);
-    static_assert(dobby::target::kPersonaManagerPiecesByTypeOffset == 0x220);
-    static_assert(dobby::target::kPersonaPieceSize == 0x1c0);
-    static_assert(dobby::target::kPersonaCapePieceType == 25);
     static_assert(dobby::target::kSubChunkRequestVectorBeginOffset == 0x38);
     static_assert(dobby::target::kSubChunkRequestVectorEndOffset == 0x40);
     static_assert(dobby::target::kSubChunkPositionSize == 12);
@@ -736,7 +779,6 @@ void testDeveloperPreferences() {
             .oreEsp = true,
             .networkMetricsOverlay = true,
             .packetTrafficOverlay = true,
-            .capeTestPackets = false,
     };
 
     const auto parsed = dobby::parseDeveloperPreferences(
@@ -746,8 +788,7 @@ void testDeveloperPreferences() {
             "chest_esp=true\n"
             "ore_esp=false\n"
             "network_metrics=0\n"
-            "packet_traffic=false\n"
-            "cape_test_packets=true\n",
+            "packet_traffic=false\n",
             defaults);
     require(!parsed.autoPopup);
     require(!parsed.entityHitboxes);
@@ -755,7 +796,6 @@ void testDeveloperPreferences() {
     require(!parsed.oreEsp);
     require(!parsed.networkMetricsOverlay);
     require(!parsed.packetTrafficOverlay);
-    require(parsed.capeTestPackets);
 
     const auto malformed = dobby::parseDeveloperPreferences(
             "version=1\n"
@@ -765,7 +805,6 @@ void testDeveloperPreferences() {
             "ore_esp=unknown\n"
             "network_metrics=unknown\n"
             "packet_traffic=unknown\n"
-            "cape_test_packets=unknown\n"
             "future_setting=false\n",
             defaults);
     require(malformed.autoPopup);
@@ -774,7 +813,6 @@ void testDeveloperPreferences() {
     require(malformed.oreEsp);
     require(malformed.networkMetricsOverlay);
     require(malformed.packetTrafficOverlay);
-    require(!malformed.capeTestPackets);
 
     const auto unsupported = dobby::parseDeveloperPreferences(
             "version=2\nentity_hitboxes=false\n", defaults);
@@ -791,39 +829,6 @@ void testDeveloperPreferences() {
     require(dobby::saveDeveloperPreferencesFile(path.string(), parsed));
     require(dobby::loadDeveloperPreferencesFile(path.string(), defaults) == parsed);
     std::filesystem::remove(path, error);
-}
-
-void testLocalCapeIndex() {
-    constexpr std::string_view firstId{
-            "12345678-1234-4abc-8def-1234567890ab"};
-    constexpr std::string_view secondId{
-            "abcdef01-2345-4678-9abc-def012345678"};
-    require(dobby::validLocalCapeId(firstId));
-    require(dobby::validLocalCapeId(secondId));
-    require(!dobby::validLocalCapeId(
-            "12345678-1234-4ABC-8def-1234567890ab"));
-    require(!dobby::validLocalCapeId(
-            "12345678-1234-4abc-8def-1234567890a"));
-
-    const auto parsed = dobby::parseLocalCapeIndex(
-            "version=1\n"
-            "12345678-1234-4abc-8def-1234567890ab\tFirst cape\n"
-            "abcdef01-2345-4678-9abc-def012345678\tSecond cape\n");
-    require(parsed && parsed->size() == 2);
-    require((*parsed)[0].pieceId == firstId);
-    require((*parsed)[0].title == "First cape");
-    require((*parsed)[1].pieceId == secondId);
-
-    require(!dobby::parseLocalCapeIndex(
-            "version=2\n"
-            "12345678-1234-4abc-8def-1234567890ab\tCape\n"));
-    require(!dobby::parseLocalCapeIndex(
-            "version=1\n"
-            "12345678-1234-4abc-8def-1234567890ab\tCape\n"
-            "12345678-1234-4abc-8def-1234567890ab\tDuplicate\n"));
-    require(!dobby::parseLocalCapeIndex(
-            "version=1\n"
-            "12345678-1234-4abc-8def-1234567890ab\tBad\tTitle\n"));
 }
 
 void testOreEspRegistry() {
@@ -1166,6 +1171,7 @@ int main() {
     testViolationDecoder();
     testStreamProbeAndReport();
     testClientSchemaFieldTrace();
+    testProtocolDumpCompilation();
     testRepeatViolationsAreRetained();
     testEntityHitboxState();
     testEntityProjection();
@@ -1175,7 +1181,6 @@ int main() {
     testConfigurationAndPacketCatalog();
     testPacketTrafficMetrics();
     testDeveloperPreferences();
-    testLocalCapeIndex();
     testOreEspRegistry();
     testDobbyWindowPolicy();
     std::cout << "Dobby tests passed\n";

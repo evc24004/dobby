@@ -94,6 +94,19 @@ bool addLauncherSwapBuffersCallback(void* user, LauncherSwapBuffersCallback call
     return true;
 }
 
+bool addMinecraftImageLoadedCallback(
+        void* user, MinecraftImageLoadedCallback callback) {
+    if (mcpelauncher_preinithook2 == nullptr || callback == nullptr)
+        return false;
+    // The launcher builds the libminecraftpe hook table after all preinit mods
+    // run, then invokes this callback once the image is loaded and registered.
+    // The replacement is intentionally null: this is a lifecycle notification,
+    // not an ELF-symbol interposition.
+    mcpelauncher_preinithook2(
+            "__dobby_minecraft_image_loaded__", nullptr, user, callback);
+    return true;
+}
+
 bool launcherSurfaceSize(void* display, void* surface, int& width, int& height) {
     resolveLauncherApi();
     constexpr int eglWidth = 0x3057;

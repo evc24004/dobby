@@ -3,7 +3,7 @@
 Compact Minecraft Bedrock developer client for macOS
 [mcpelauncher](https://github.com/minecraft-linux/mcpelauncher-manifest).
 
-It captures packet violations and raw decode evidence, displays entity/player hitboxes, outlines client-known chests and ores, and shows passive network, chunk, and packet-traffic metrics. It also includes an isolated, opt-in cape entitlement test.
+Features include a fail-closed startup protocol dumper, packet-violation and raw decode evidence, entity/player hitboxes, client-known chest and ore outlines, and passive network, chunk, and packet-traffic metrics.
 
 ## In-game diagnostic
 
@@ -21,11 +21,13 @@ The bottom-right packet overlay shows compact incoming/outgoing packet and byte 
 
 Menu toggles are saved locally and restored on the next launch.
 
-## Local cape entitlement test
+## Startup protocol dump
 
-Put local `* (persona).zip` cape archives in the ignored `capes/` directory. The verified install workflow validates every archive and PNG, decodes each bounded 64×32 RGBA texture, and writes only Dobby's private `dobby-capes` index and pixel files. It does not edit Bedrock's persona cache, catalog, resource-pack directories, or account data. Previous Dobby cape data is backed up before replacement. Cape assets remain local and are never staged by the publish workflow.
+Every supported launch sweeps the client packet factory and passively traces each safe default packet into an isolated `BinaryStream`; none of those bytes are sent. Dobby writes the resulting direct evidence to `protocol-observed.json`.
 
-Enable `Mods > Dobby > Cape entitlement test` before opening the cape picker. For the exact supported build, Dobby validates the native persona manager and `PersonaRepository` layouts, adds local UUIDs to the manager's in-memory `persona_capes` vector, and resolves those UUIDs through validated piece-lookup hooks. Disabling the toggle removes the local IDs from that vector. Selecting a local UUID reuses the client's validated Pan Cape piece as a resource template. On equip, Dobby accepts only an exact local cape ID and an exact 64×32 RGBA `SerializedSkinImpl` layout, copies that cape's local pixels into the shared skin, and marks the outgoing `PlayerSkinPacket` premium, non-persona, and cape-on-classic. The toggle defaults to off; any target, ABI, ID, image, or vector mismatch leaves mutation disabled.
+Default values cannot prove empty collection element types or untaken conditional branches, so Dobby also embeds the exact PrismarineJS Bedrock `1.26.40` reference from commit `8a80816cbfb3fe2b609f2cde4e57796c8033af61`. Startup verifies its size and hash before atomically writing the complete consumer files `protocol.json` and `version.json`. `protocol-dump-status.json` records reference-only IDs, runtime-name divergences, serialization failures, field traces, source commit, and hashes. A failed target or reference check produces no claimed complete dump.
+
+## In-game packet violation evidence
 
 ![Packet rejection diagnostic window](media/image.png)
 

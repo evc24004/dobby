@@ -6,8 +6,6 @@
 
 #include "core/constants.hpp"
 #include "core/runtime_state.hpp"
-#include "hooks/persona_cape_repository_hook.hpp"
-#include "hooks/persona_ownership_hook.hpp"
 #include "diagnostics/report_builder.hpp"
 #include "hooks/chest_esp_hook.hpp"
 #include "hooks/entity_hitbox_hook.hpp"
@@ -35,7 +33,6 @@ bool chestEspSelected(void*) { return runtimeState().chestEsp(); }
 bool oreEspSelected(void*) { return runtimeState().oreEsp(); }
 bool networkMetricsSelected(void*) { return runtimeState().networkMetricsOverlay(); }
 bool packetTrafficSelected(void*) { return runtimeState().packetTrafficOverlay(); }
-bool capeTestSelected(void*) { return runtimeState().capeTestPackets(); }
 
 void windowClosed(void*) { verboseLine("developer window closed"); }
 
@@ -135,23 +132,6 @@ void togglePacketTraffic(void*) {
                     : "UI: packet traffic overlay disabled");
 }
 
-void toggleCapeTest(void*) {
-    if (!runtimeState().capeTestPacketsAvailable()) {
-        logLine("ERROR: cape entitlement test is unavailable");
-        return;
-    }
-    const bool enabled = runtimeState().toggleCapeTestPackets();
-    persistDeveloperPreferences();
-    const bool ownershipApplied = setPersonaOwnershipBypass(enabled);
-    const bool repositoryApplied = setPersonaCapeRepositoryEnabled(enabled);
-    logLine(enabled ? "UI: cape entitlement test packet mutation enabled"
-                    : "UI: cape entitlement test packet mutation disabled");
-    if (!ownershipApplied)
-        logLine("cape ownership test: saved toggle will apply after client restart");
-    if (!repositoryApplied)
-        logLine("local cape repository: saved toggle will apply after client restart");
-}
-
 } // namespace
 
 void showDeveloperStatus(void*) {
@@ -172,13 +152,7 @@ void showDeveloperStatus(void*) {
             " total / " + std::to_string(snapshot.retainedViolations) + " retained";
     const std::string toggles =
             std::string("Auto popup: ") + (snapshot.autoPopup ? "on" : "off") +
-            "  |  verbose: " + (snapshot.verbose ? "on" : "off") +
-            "\nCape entitlement test: " +
-            (runtimeState().capeTestPacketsAvailable()
-                     ? (runtimeState().capeTestPackets() ? "on" : "off")
-                     : "unavailable") +
-            "  |  picker hook: " +
-            (personaOwnershipFeatureCaptured() ? "ready" : "pending restart");
+            "  |  verbose: " + (snapshot.verbose ? "on" : "off");
     std::array<LauncherControl, 6> controls{
             textControl("DOBBY DEVELOPER CLIENT", 2),
             textControl(hook.c_str(), 1),
@@ -255,10 +229,6 @@ void registerDeveloperUi() {
         logLine(runtimeState().packetTrafficOverlay()
                         ? "packet traffic overlay enabled"
                         : "packet traffic overlay disabled by saved preference");
-    if (runtimeState().capeTestPacketsAvailable())
-        logLine(runtimeState().capeTestPackets()
-                        ? "cape entitlement test packet mutation enabled"
-                        : "cape entitlement test packet mutation disabled by saved preference");
     logLine(launcherWindowAvailable() ? "UI: launcher window API ready"
                                       : "ERROR: launcher window API unavailable");
     logLine(launcherClipboardAvailable() ? "UI: native clipboard ready"
@@ -268,7 +238,7 @@ void registerDeveloperUi() {
         return;
     }
 
-    static std::array<LauncherMenuEntry, 7> subentries{
+    static std::array<LauncherMenuEntry, 6> subentries{
             LauncherMenuEntry{
                     "Entity hitboxes", nullptr, entityHitboxesSelected, toggleHitboxes, 0, nullptr},
             LauncherMenuEntry{
@@ -281,9 +251,6 @@ void registerDeveloperUi() {
             LauncherMenuEntry{
                     "Packet traffic", nullptr, packetTrafficSelected,
                     togglePacketTraffic, 0, nullptr},
-            LauncherMenuEntry{
-                    "Cape entitlement test", nullptr, capeTestSelected,
-                    toggleCapeTest, 0, nullptr},
             LauncherMenuEntry{"Automatic popup", nullptr, autoPopupSelected, toggleAutoPopup, 0, nullptr},
     };
     static LauncherMenuEntry root{

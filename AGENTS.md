@@ -5,7 +5,7 @@
 - Dobby is a compact developer client for Minecraft Bedrock on mcpelauncher.
 - Prioritize exact evidence over generic interpretations or guesses.
 - Keep the in-game interface small even when reports are comprehensive.
-- Keep packet mutation isolated, opt-in, reversible, and limited to explicit test scenarios.
+- Never alter gameplay packets; observe and report only.
 - Fail closed when a target address, signature, layout, or ABI is uncertain.
 - Preserve useful diagnostics locally in text and JSONL formats.
 - Treat repeat occurrences as new events that may require a new popup.
@@ -86,7 +86,7 @@
 - Cap context length, raw capture length, trace length, and history length.
 - Validate pointers and lengths before copying stream data.
 - Do not patch unsupported Minecraft builds.
-- Keep test mutations scoped; do not suppress Bedrock disconnects or alter unrelated traffic.
+- Do not send packets, bypass checks, or suppress Bedrock disconnects.
 - Do not publish runtime logs, packet captures, credentials, or local profiles.
 - Keep previous installed builds recoverable during deployment.
 - Prefer partial diagnostics over an unsafe hook.

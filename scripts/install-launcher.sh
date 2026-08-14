@@ -55,10 +55,3 @@ installed_hash=$(shasum -a 256 "$install_dir/libdobby.so" | awk '{print $1}')
 
 printf '%s\n' "$install_dir" > build-android-arm64/install-path.txt
 echo "Installed Dobby $build_hash to: $install_dir"
-
-if [ -d capes ]; then
-    echo "==> Validating and installing local persona cape packs"
-    python3 scripts/install-capes.py --source capes --launcher-root "$launcher_root"
-else
-    echo "Local capes directory not present; skipped cape-pack installation."
-fi

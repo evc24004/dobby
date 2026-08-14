@@ -17,6 +17,9 @@ extern "C" void* mcpelauncher_host_dlopen(const char* path, int mode)
         __attribute__((weak));
 extern "C" void* mcpelauncher_host_dlsym(void* handle, const char* symbol)
         __attribute__((weak));
+extern "C" void mcpelauncher_preinithook2(
+        const char* name, void* replacement, void* user,
+        void (*callback)(void* user, void* replacement)) __attribute__((weak));
 
 struct LauncherMenuEntry {
     const char* name;
@@ -52,6 +55,7 @@ struct LauncherControl {
 namespace dobby {
 
 using LauncherSwapBuffersCallback = void (*)(void* user, void* display, void* surface);
+using MinecraftImageLoadedCallback = void (*)(void* user, void* replacement);
 
 void resolveLauncherApi();
 bool launcherWindowAvailable();
@@ -59,6 +63,8 @@ bool launcherMenuAvailable();
 bool launcherClipboardAvailable();
 void* resolveHostSymbol(const char* name);
 bool addLauncherSwapBuffersCallback(void* user, LauncherSwapBuffersCallback callback);
+bool addMinecraftImageLoadedCallback(
+        void* user, MinecraftImageLoadedCallback callback);
 bool launcherSurfaceSize(void* display, void* surface, int& width, int& height);
 void addLauncherMenu(std::span<LauncherMenuEntry> entries);
 void showLauncherWindow(

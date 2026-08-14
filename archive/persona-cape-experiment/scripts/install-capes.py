@@ -284,9 +284,10 @@ def install_runtime_capes(
     stage = Path(tempfile.mkdtemp(prefix=".dobby-capes-", dir=launcher_root))
     backup: Path | None = None
     try:
-        index_lines = ["version=1"]
+        index_lines = ["version=2"]
         for pack in packs:
             piece_id = str(pack["piece_id"])
+            pack_id = str(pack["pack_id"])
             title = str(pack["title"])
             if any(character in title for character in "\t\r\n"):
                 raise CapePackError("cape titles cannot contain tabs or newlines")
@@ -296,7 +297,7 @@ def install_runtime_capes(
             if not isinstance(pixels, bytes) or len(pixels) != 64 * 32 * 4:
                 raise CapePackError("decoded cape texture has an invalid byte count")
             (stage / f"{piece_id}.rgba").write_bytes(pixels)
-            index_lines.append(f"{piece_id}\t{title}")
+            index_lines.append(f"{piece_id}\t{pack_id}\t{title}")
         (stage / "index.tsv").write_text("\n".join(index_lines) + "\n", encoding="utf-8")
 
         if destination.exists():

@@ -1,0 +1,14 @@
+    .section .rodata
+    .balign 8
+    .global dobby_protocol_reference_start
+    .global dobby_protocol_reference_end
+dobby_protocol_reference_start:
+    .incbin "@DOBBY_PROTOCOL_REFERENCE_DIR@/protocol.json"
+dobby_protocol_reference_end:
+
+    .balign 8
+    .global dobby_protocol_version_reference_start
+    .global dobby_protocol_version_reference_end
+dobby_protocol_version_reference_start:
+    .incbin "@DOBBY_PROTOCOL_REFERENCE_DIR@/version.json"
+dobby_protocol_version_reference_end:

@@ -10,7 +10,7 @@
 namespace dobby {
 namespace {
 
-constexpr std::string_view kIndexVersion{"version=1"};
+constexpr std::string_view kIndexVersion{"version=2"};
 
 bool validTitle(std::string_view value) {
     if (value.empty() || value.size() > 80)
@@ -84,22 +84,29 @@ std::optional<std::vector<LocalCapeDescriptor>> parseLocalCapeIndex(
                 : text.substr(newline + 1);
         if (line.empty())
             continue;
-        const auto tab = line.find('\t');
-        if (tab == std::string_view::npos ||
-            line.find('\t', tab + 1) != std::string_view::npos) {
+        const auto firstTab = line.find('\t');
+        const auto secondTab = firstTab == std::string_view::npos
+                ? std::string_view::npos
+                : line.find('\t', firstTab + 1);
+        if (firstTab == std::string_view::npos ||
+            secondTab == std::string_view::npos ||
+            line.find('\t', secondTab + 1) != std::string_view::npos) {
             return std::nullopt;
         }
-        const auto pieceId = line.substr(0, tab);
-        const auto title = line.substr(tab + 1);
-        if (!validLocalCapeId(pieceId) || !validTitle(title) ||
+        const auto pieceId = line.substr(0, firstTab);
+        const auto packId = line.substr(
+                firstTab + 1, secondTab - firstTab - 1);
+        const auto title = line.substr(secondTab + 1);
+        if (!validLocalCapeId(pieceId) || !validLocalCapeId(packId) ||
+            !validTitle(title) ||
             result.size() >= kMaximumLocalCapes ||
             std::any_of(result.begin(), result.end(), [&](const auto& existing) {
-                return existing.pieceId == pieceId;
+                return existing.pieceId == pieceId || existing.packId == packId;
             })) {
             return std::nullopt;
         }
         result.push_back(LocalCapeDescriptor{
-                std::string(pieceId), std::string(title)});
+                std::string(pieceId), std::string(packId), std::string(title)});
     }
     return result.empty()
             ? std::nullopt

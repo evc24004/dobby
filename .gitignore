@@ -29,6 +29,12 @@ CMakeFiles/
 /latest-dobby-violation.txt
 /dobby-clipboard.txt
 /dobby-preferences.conf
+/protocol.json
+/protocol-observed.json
+/version.json
+/protocol-dump-status.json
+/protocol-reference-1.26.40.json
+/version-reference-1.26.40.json
 /media/
 !/media/
 /media/*

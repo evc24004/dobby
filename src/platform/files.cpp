@@ -152,4 +152,34 @@ const std::string& preferencesPath() {
     return value;
 }
 
+const std::string& protocolPath() {
+    static const std::string value = outputPath("protocol.json");
+    return value;
+}
+
+const std::string& observedProtocolPath() {
+    static const std::string value = outputPath("protocol-observed.json");
+    return value;
+}
+
+const std::string& protocolVersionPath() {
+    static const std::string value = outputPath("version.json");
+    return value;
+}
+
+const std::string& protocolStatusPath() {
+    static const std::string value = outputPath("protocol-dump-status.json");
+    return value;
+}
+
+const std::string& protocolReferencePath() {
+    static const std::string value = outputPath("protocol-reference-1.26.40.json");
+    return value;
+}
+
+const std::string& protocolVersionReferencePath() {
+    static const std::string value = outputPath("version-reference-1.26.40.json");
+    return value;
+}
+
 } // namespace dobby

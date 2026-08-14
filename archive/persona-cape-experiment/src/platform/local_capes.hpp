@@ -18,6 +18,7 @@ inline constexpr std::size_t kMaximumLocalCapes = 64;
 
 struct LocalCapeDescriptor {
     std::string pieceId;
+    std::string packId;
     std::string title;
 };
 
