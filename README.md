@@ -35,11 +35,18 @@ Default values cannot prove empty collection element types or untaken conditiona
 
 ## Target
 
-- Minecraft Android `1.26.40.5`
+- Dobby `2.11.0`
+- Minecraft Android `1.26.44.3`
 - `arm64-v8a`
-- `libminecraftpe.so` build ID `5893edc8d56c93cbdb50e0f9436320236b78c89d`
+- `libminecraftpe.so` build ID `b480c79a54f33d6e4f0d63a131673e3daf749911`
 
 The mod validates the target signature and refuses to patch incompatible builds.
+
+On macOS, Minecraft `1.26.44.3` currently needs the launcher compatibility
+module from `mcpelauncher-updates/1.26.40.1/arm64-v8a` loaded alongside Dobby.
+The verified runtime combination reaches `READY: Dobby 2.11.0 developer
+diagnostics active` and initializes the protocol, packet, metrics, chunk, ESP,
+and developer UI hooks.
 
 ## Build
 
