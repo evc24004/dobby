@@ -11,13 +11,7 @@ manifest=mod.json
 
 launcher_root="$HOME/Library/Application Support/mcpelauncher"
 mods_root="$launcher_root/mods"
-profiles="$launcher_root/profiles/profiles.ini"
-registered=""
-if [ -f "$profiles" ]; then
-    registered=$(sed -n 's/^mods\\[0-9][0-9]*\\path=//p' "$profiles" | \
-        awk '/\/(dobby|packet-debugger)\// {path=$0} END {print path}')
-fi
-install_dir=${registered:-"$mods_root/dobby/1.26.44.3/arm64-v8a/"}
+install_dir="$mods_root/dobby/1.26.45.1/arm64-v8a/"
 
 case "$install_dir" in
     "$mods_root"/*) ;;

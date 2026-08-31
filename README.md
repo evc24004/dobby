@@ -25,7 +25,7 @@ Menu toggles are saved locally and restored on the next launch.
 
 Every supported launch sweeps the client packet factory and passively traces each safe default packet into an isolated `BinaryStream`; none of those bytes are sent. Dobby writes the resulting direct evidence to `protocol-observed.json`.
 
-Default values cannot prove empty collection element types or untaken conditional branches, so Dobby also embeds the exact PrismarineJS Bedrock `1.26.40` reference from commit `8a80816cbfb3fe2b609f2cde4e57796c8033af61`. Startup verifies its size and hash before atomically writing the complete consumer files `protocol.json` and `version.json`. `protocol-dump-status.json` records reference-only IDs, runtime-name divergences, serialization failures, field traces, source commit, and hashes. A failed target or reference check produces no claimed complete dump.
+Default values cannot prove empty collection element types or untaken conditional branches, so Dobby also embeds the exact PrismarineJS Bedrock `1.26.40` baseline from commit `8a80816cbfb3fe2b609f2cde4e57796c8033af61`. Startup verifies its size and hash before atomically writing the pinned baseline files `protocol.json` and `version.json`; the direct `1.26.45` runtime evidence remains separate in `protocol-observed.json`. `protocol-dump-status.json` records reference-only IDs, runtime-name divergences, serialization failures, field traces, source commit, and hashes. A failed target or reference check produces no claimed verified baseline.
 
 ## In-game packet violation evidence
 
@@ -35,16 +35,17 @@ Default values cannot prove empty collection element types or untaken conditiona
 
 ## Target
 
-- Dobby `2.11.0`
-- Minecraft Android `1.26.44.3`
+- Dobby `2.12.0`
+- Minecraft Android `1.26.45.1` (the `26.45` hotfix)
 - `arm64-v8a`
-- `libminecraftpe.so` build ID `b480c79a54f33d6e4f0d63a131673e3daf749911`
+- network protocol `2169`
+- `libminecraftpe.so` build ID `868e275cb295e9a275bb29d2258edc2f7dc48761`
 
 The mod validates the target signature and refuses to patch incompatible builds.
 
-On macOS, Minecraft `1.26.44.3` currently needs the launcher compatibility
-module from `mcpelauncher-updates/1.26.40.1/arm64-v8a` loaded alongside Dobby.
-The verified runtime combination reaches `READY: Dobby 2.11.0 developer
+On macOS, Minecraft `1.26.45.1` currently needs the launcher compatibility
+module from `mcpelauncher-updates/1.26.45.1/arm64-v8a` loaded alongside Dobby.
+The verified runtime combination reaches `READY: Dobby 2.12.0 developer
 diagnostics active` and initializes the protocol, packet, metrics, chunk, ESP,
 and developer UI hooks.
 
