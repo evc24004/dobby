@@ -15,6 +15,8 @@ inline constexpr std::ptrdiff_t kViolationContextOffset = 0x40;
 inline constexpr std::size_t kMaximumContextLength = 1024 * 1024;
 
 std::optional<ViolationRecord> decodeViolation(const void* packet);
+std::optional<ViolationRecord> decodeViolationArguments(
+        std::int32_t response, std::int32_t packetId, const void* context);
 std::string violationObjectLayout(const ViolationRecord& record);
 
 } // namespace dobby

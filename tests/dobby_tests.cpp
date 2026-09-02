@@ -52,6 +52,11 @@ void store(std::byte* destination, T value) {
 }
 
 void testViolationDecoder() {
+    static_assert(dobby::target::kHandlePacketViolationOffset == 0x09add934);
+    static_assert(
+            dobby::target::kHandlePacketViolationVtableSlotOffset ==
+            0x11f91410);
+    static_assert(dobby::target::kHandlePacketViolationSignature[0] == 0xfd);
     std::array<std::byte, 0x80> packet{};
     store<std::int32_t>(packet.data() + dobby::kViolationTypeOffset, 0);
     store<std::int32_t>(packet.data() + dobby::kViolationSeverityOffset, 2);
@@ -78,6 +83,20 @@ void testViolationDecoder() {
     assert(longRecord);
     assert(longRecord->context == longContext);
     assert(longRecord->contextStorage == "long");
+
+    std::array<std::byte, 0x20> directContext{};
+    directContext[0] = static_cast<std::byte>(shortContext.size() << 1U);
+    std::memcpy(directContext.data() + 1, shortContext.data(), shortContext.size());
+    const auto directRecord = dobby::decodeViolationArguments(
+            3, 50, directContext.data());
+    assert(directRecord);
+    assert(directRecord->type == -1);
+    assert(directRecord->severity == 2);
+    assert(directRecord->packetId == 50);
+    assert(directRecord->context == shortContext);
+    assert(directRecord->contextStorage == "short");
+
+    assert(!dobby::decodeViolationArguments(3, 50, nullptr));
 }
 
 void testStreamProbeAndReport() {

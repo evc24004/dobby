@@ -101,9 +101,17 @@ namespace dobby {
 namespace {
 
 using GetIdFn = std::int32_t (*)(const void* packet);
+using HandlePacketViolationFn = void (*)(
+        void* handler, const void* packetSecurityController,
+        const void* errorCode, std::int32_t response, std::int32_t packetId,
+        void* context, const void* networkIdentifier,
+        std::uint8_t clientSubId, std::uint8_t senderSubId,
+        std::uint32_t packetSize);
 GetIdFn originalViolationGetId = nullptr;
+HandlePacketViolationFn originalHandlePacketViolation = nullptr;
 std::atomic_bool schemaTraceEnabled{false};
 thread_local bool handlingViolation = false;
+thread_local bool handlingDirectViolation = false;
 thread_local const void* lastViolationPacket = nullptr;
 thread_local std::chrono::steady_clock::time_point lastViolationAt{};
 
@@ -114,7 +122,7 @@ void persistDiagnostic(const Diagnostic& diagnostic) {
 }
 
 void handleViolation(const char* intercept, const void* packet) {
-    if (handlingViolation)
+    if (handlingViolation || handlingDirectViolation)
         return;
     const auto now = std::chrono::steady_clock::now();
     if (packet == lastViolationPacket && now - lastViolationAt < std::chrono::seconds(1))
@@ -140,6 +148,58 @@ void handleViolation(const char* intercept, const void* packet) {
     if (runtimeState().autoPopup())
         showLatestViolation();
     handlingViolation = false;
+}
+
+bool captureDirectViolation(
+        std::int32_t response, std::int32_t packetId, const void* context) {
+    if (handlingViolation)
+        return false;
+    handlingViolation = true;
+
+    const auto record = decodeViolationArguments(response, packetId, context);
+    if (!record) {
+        logLine("ERROR: unable to decode ClientNetworkHandler::handlePacketViolation arguments");
+        handlingViolation = false;
+        return false;
+    }
+
+    auto diagnostic = buildDiagnostic(
+            *record, recentStreamFailure(std::chrono::seconds(10)),
+            "ClientNetworkHandler::handlePacketViolation vtable");
+    persistDiagnostic(diagnostic);
+    runtimeState().addDiagnostic(std::move(diagnostic));
+    handlingViolation = false;
+    return true;
+}
+
+void handlePacketViolationDetour(
+        void* handler, const void* packetSecurityController,
+        const void* errorCode, std::int32_t response, std::int32_t packetId,
+        void* context, const void* networkIdentifier,
+        std::uint8_t clientSubId, std::uint8_t senderSubId,
+        std::uint32_t packetSize) {
+    const bool outermost = !handlingDirectViolation;
+    bool captured = false;
+    if (outermost) {
+        handlingDirectViolation = true;
+        captured = captureDirectViolation(response, packetId, context);
+    }
+
+    if (originalHandlePacketViolation != nullptr) {
+        originalHandlePacketViolation(
+                handler, packetSecurityController, errorCode, response,
+                packetId, context, networkIdentifier, clientSubId,
+                senderSubId, packetSize);
+    }
+
+    if (outermost) {
+        handlingDirectViolation = false;
+        // Bedrock builds the disconnect UI inside the original callback for a
+        // terminating violation. Show Dobby afterward so its exact diagnostic
+        // is not hidden behind the generic Block screen.
+        if (captured && runtimeState().autoPopup())
+            showLatestViolation();
+    }
 }
 
 std::int32_t violationGetIdDetour(const void* packet) {
@@ -315,6 +375,39 @@ bool installViolationHook(const MinecraftImage& image) {
     return true;
 }
 
+bool installDirectViolationHook(const MinecraftImage& image) {
+    const auto functionAddress = image.base + target::kHandlePacketViolationOffset;
+    if (!addressIsExecutable(image, functionAddress) ||
+        !matchesSignature(reinterpret_cast<const void*>(functionAddress),
+                          target::kHandlePacketViolationSignature)) {
+        logLine("ERROR: ClientNetworkHandler::handlePacketViolation signature mismatch");
+        return false;
+    }
+
+    auto* slot = reinterpret_cast<void**>(
+            image.base + target::kHandlePacketViolationVtableSlotOffset);
+    if (*slot != reinterpret_cast<void*>(functionAddress)) {
+        logLine("ERROR: ClientNetworkHandler::handlePacketViolation vtable mismatch");
+        return false;
+    }
+    if (mcpelauncher_patch == nullptr) {
+        logLine("ERROR: launcher patch API unavailable for direct violation hook");
+        return false;
+    }
+
+    originalHandlePacketViolation =
+            reinterpret_cast<HandlePacketViolationFn>(*slot);
+    void* replacement = reinterpret_cast<void*>(handlePacketViolationDetour);
+    if (mcpelauncher_patch(slot, &replacement, sizeof(replacement)) == nullptr ||
+        *slot != replacement) {
+        originalHandlePacketViolation = nullptr;
+        logLine("ERROR: launcher rejected ClientNetworkHandler::handlePacketViolation hook");
+        return false;
+    }
+    logLine("installed ClientNetworkHandler::handlePacketViolation hook");
+    return true;
+}
+
 } // namespace
 
 void installPacketHooks() {
@@ -330,29 +423,46 @@ void installPacketHooks() {
     const bool packetEndProbe = installPacketEndProbe(image);
     const bool schemaProbe = installClientSchemaProbe(image);
     const bool streamProbe = byteTraceProbe || packetEndProbe;
+    const bool directViolationHook = installDirectViolationHook(image);
     const bool warningHook = installViolationHook(image);
-    if (!warningHook) {
+    if (!directViolationHook && !warningHook) {
         runtimeState().setHookStatus("failed: violation hook unavailable", false, streamProbe);
-        recordLifecycleEvent("hook_error", "PacketViolationWarningPacket hook unavailable");
+        recordLifecycleEvent("hook_error", "direct and warning violation hooks unavailable");
         return;
     }
 
     runtimeState().setHookStatus(
-            packetEndProbe && byteTraceProbe && schemaProbe
-                    ? "active: violation + boundary + byte/field trace"
+            directViolationHook && packetEndProbe && byteTraceProbe && schemaProbe
+                    ? "active: direct violation + boundary + byte/field trace"
+                    : directViolationHook && packetEndProbe && byteTraceProbe
+                    ? "active: direct violation + exact packet boundary + byte trace"
+                    : directViolationHook && streamProbe
+                    ? "active: direct violation + partial stream trace"
+                    : directViolationHook
+                    ? "active: direct violation"
+                    : packetEndProbe && byteTraceProbe && schemaProbe
+                    ? "active: warning violation + boundary + byte/field trace"
                     : packetEndProbe && byteTraceProbe
-                    ? "active: violation + exact packet boundary + byte trace"
-                    : streamProbe ? "active: violation + partial stream trace"
-                                  : "active: violation only",
-            true, streamProbe);
+                    ? "active: warning violation + exact packet boundary + byte trace"
+                    : streamProbe ? "active: warning violation + partial stream trace"
+                                  : "active: warning violation only",
+            directViolationHook || warningHook, streamProbe);
     recordLifecycleEvent(
-            "hook_ready", packetEndProbe && byteTraceProbe && schemaProbe
-                    ? "packet violations, packet boundaries, byte tracing, and client field tracing active"
+            "hook_ready", directViolationHook && packetEndProbe && byteTraceProbe && schemaProbe
+                    ? "direct packet violations, packet boundaries, byte tracing, and client field tracing active"
+                    : directViolationHook && packetEndProbe && byteTraceProbe
+                    ? "direct packet violations, exact packet boundaries, and byte tracing active"
+                    : directViolationHook && streamProbe
+                    ? "direct packet violations and partial stream tracing active"
+                    : directViolationHook
+                    ? "direct packet violations active; stream tracing unavailable"
+                    : packetEndProbe && byteTraceProbe && schemaProbe
+                    ? "warning packet violations, packet boundaries, byte tracing, and client field tracing active"
                     : packetEndProbe && byteTraceProbe
-                    ? "packet violations, exact packet boundaries, and byte tracing active"
+                    ? "warning packet violations, exact packet boundaries, and byte tracing active"
                     : streamProbe
-                    ? "packet violations and partial stream tracing active"
-                    : "packet violations active; stream tracing unavailable");
+                    ? "warning packet violations and partial stream tracing active"
+                    : "warning packet violations active; stream tracing unavailable");
     logLine(std::string("READY: Dobby ") + kDobbyVersion + " developer diagnostics active");
 }
 

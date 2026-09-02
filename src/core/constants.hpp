@@ -6,7 +6,7 @@
 
 namespace dobby {
 
-inline constexpr char kDobbyVersion[] = "2.12.0";
+inline constexpr char kDobbyVersion[] = "2.12.1";
 inline constexpr char kMinecraftVersion[] = "1.26.45.1";
 inline constexpr char kMinecraftBuildId[] = "868e275cb295e9a275bb29d2258edc2f7dc48761";
 inline constexpr char kMinecraftDataVersion[] = "1.26.40";
@@ -25,6 +25,16 @@ inline constexpr std::uintptr_t kViolationGetIdOffset = 0x0cfa6b3c;
 inline constexpr std::uintptr_t kViolationGetIdVtableSlotOffset = 0x12102058;
 inline constexpr std::array<std::uint8_t, 8> kViolationGetIdSignature{
         0x80, 0x13, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6};
+
+// ClientNetworkHandler::handlePacketViolation receives the exact response,
+// invalid packet ID, and context before a terminating violation becomes
+// DisconnectFailReason::BadPacket (90). LegacyClientNetworkHandler uses the
+// inherited primary vtable slot below in the supported Android target.
+inline constexpr std::uintptr_t kHandlePacketViolationOffset = 0x09add934;
+inline constexpr std::uintptr_t kHandlePacketViolationVtableSlotOffset = 0x11f91410;
+inline constexpr std::array<std::uint8_t, 16> kHandlePacketViolationSignature{
+        0xfd, 0x7b, 0xba, 0xa9, 0xfc, 0x6f, 0x01, 0xa9,
+        0xfa, 0x67, 0x02, 0xa9, 0xf8, 0x5f, 0x03, 0xa9};
 
 inline constexpr std::uintptr_t kStreamReadOffset = 0x11a85d84;
 inline constexpr std::uintptr_t kStreamReadVtableSlotOffset = 0x124a89e0;

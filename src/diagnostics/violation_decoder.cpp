@@ -54,6 +54,27 @@ std::optional<ViolationRecord> decodeViolation(const void* packet) {
     return result;
 }
 
+std::optional<ViolationRecord> decodeViolationArguments(
+        std::int32_t response, std::int32_t packetId, const void* context) {
+    if (context == nullptr)
+        return std::nullopt;
+
+    const auto decodedContext = readAndroidString(
+            static_cast<const std::byte*>(context));
+    if (!decodedContext)
+        return std::nullopt;
+
+    ViolationRecord result;
+    // handlePacketViolation receives the response but not the serialized
+    // PacketViolationType. Preserve that absence instead of inferring a type.
+    result.type = -1;
+    result.severity = response >= 1 && response <= 3 ? response - 1 : -1;
+    result.packetId = packetId;
+    result.context.assign(decodedContext->value);
+    result.contextStorage = decodedContext->storage;
+    return result;
+}
+
 std::string violationObjectLayout(const ViolationRecord& record) {
     return
             "PacketViolationWarningPacket payload @ object + 0x30\n"

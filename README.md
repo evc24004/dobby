@@ -29,13 +29,20 @@ Default values cannot prove empty collection element types or untaken conditiona
 
 ## In-game packet violation evidence
 
+Dobby hooks `ClientNetworkHandler::handlePacketViolation` before Bedrock turns
+a terminating decode failure into the generic `ClientDisconnection-90` / `Block`
+screen. The popup therefore retains the exact invalid packet ID, Mojang context
+string, decode boundary, client field path, and bounded raw bytes even when no
+`PacketViolationWarningPacket` is emitted. The older warning-packet hook remains
+as a validated fallback.
+
 ![Packet rejection diagnostic window](media/image.png)
 
 ![Entity and player hitbox overlay](media/esp.png)
 
 ## Target
 
-- Dobby `2.12.0`
+- Dobby `2.12.1`
 - Minecraft Android `1.26.45.1` (the `26.45` hotfix)
 - `arm64-v8a`
 - network protocol `2169`
@@ -45,7 +52,7 @@ The mod validates the target signature and refuses to patch incompatible builds.
 
 On macOS, Minecraft `1.26.45.1` currently needs the launcher compatibility
 module from `mcpelauncher-updates/1.26.45.1/arm64-v8a` loaded alongside Dobby.
-The verified runtime combination reaches `READY: Dobby 2.12.0 developer
+The verified runtime combination reaches `READY: Dobby 2.12.1 developer
 diagnostics active` and initializes the protocol, packet, metrics, chunk, ESP,
 and developer UI hooks.
 
