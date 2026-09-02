@@ -107,13 +107,33 @@ using HandlePacketViolationFn = void (*)(
         void* context, const void* networkIdentifier,
         std::uint8_t clientSubId, std::uint8_t senderSubId,
         std::uint32_t packetSize);
+using AllowIncomingPacketIdFn = std::int32_t (*)(
+        void* handler, const void* networkIdentifierWithSubId,
+        std::int32_t packetId, std::uint64_t packetSize);
+using OnDisconnectFn = void (*)(
+        void* handler, const void* source, std::int32_t disconnectReason,
+        std::int32_t disconnectStage, const void* messageFromServer,
+        const void* messageBodyOverride, bool skipMessage,
+        const void* telemetryOverride);
 GetIdFn originalViolationGetId = nullptr;
 HandlePacketViolationFn originalHandlePacketViolation = nullptr;
+AllowIncomingPacketIdFn originalAllowIncomingPacketId = nullptr;
+OnDisconnectFn originalOnDisconnect = nullptr;
 std::atomic_bool schemaTraceEnabled{false};
 thread_local bool handlingViolation = false;
 thread_local bool handlingDirectViolation = false;
+thread_local bool handlingBadPacketDisconnect = false;
 thread_local const void* lastViolationPacket = nullptr;
 thread_local std::chrono::steady_clock::time_point lastViolationAt{};
+
+struct InboundPacketObservation {
+    std::int32_t packetId{-1};
+    std::uint64_t packetSize{};
+    std::chrono::steady_clock::time_point observedAt{};
+    bool valid{false};
+};
+
+thread_local InboundPacketObservation lastInboundPacket;
 
 void persistDiagnostic(const Diagnostic& diagnostic) {
     writeFile(latestPath(), diagnostic.report, "w");
@@ -197,6 +217,71 @@ void handlePacketViolationDetour(
         // Bedrock builds the disconnect UI inside the original callback for a
         // terminating violation. Show Dobby afterward so its exact diagnostic
         // is not hidden behind the generic Block screen.
+        if (captured && runtimeState().autoPopup())
+            showLatestViolation();
+    }
+}
+
+std::int32_t allowIncomingPacketIdDetour(
+        void* handler, const void* networkIdentifierWithSubId,
+        std::int32_t packetId, std::uint64_t packetSize) {
+    lastInboundPacket = {
+            packetId, packetSize, std::chrono::steady_clock::now(), true};
+    return originalAllowIncomingPacketId != nullptr
+            ? originalAllowIncomingPacketId(
+                      handler, networkIdentifierWithSubId, packetId, packetSize)
+            : 0;
+}
+
+bool captureBadPacketDisconnect(
+        const void* messageFromServer, const void* messageBodyOverride) {
+    const auto now = std::chrono::steady_clock::now();
+    const bool hasRecentPacket = lastInboundPacket.valid &&
+            now - lastInboundPacket.observedAt <= std::chrono::seconds(10);
+    const auto packetId = hasRecentPacket ? lastInboundPacket.packetId : -1;
+    const auto packetSize = hasRecentPacket ? lastInboundPacket.packetSize : 0;
+    const auto record = decodeBadPacketDisconnect(
+            packetId, packetSize, messageFromServer, messageBodyOverride);
+    if (!record) {
+        logLine("ERROR: unable to decode ClientNetworkHandler::onDisconnect BadPacket arguments");
+        return false;
+    }
+
+    auto diagnostic = buildDiagnostic(
+            *record, recentStreamFailure(std::chrono::seconds(10)),
+            "ClientNetworkHandler::onDisconnect BadPacket + allowIncomingPacketId");
+    persistDiagnostic(diagnostic);
+    runtimeState().addDiagnostic(std::move(diagnostic));
+    return true;
+}
+
+void onDisconnectDetour(
+        void* handler, const void* source, std::int32_t disconnectReason,
+        std::int32_t disconnectStage, const void* messageFromServer,
+        const void* messageBodyOverride, bool skipMessage,
+        const void* telemetryOverride) {
+    constexpr std::int32_t badPacketReason = 90;
+    const bool outermost = !handlingBadPacketDisconnect;
+    bool captured = false;
+    if (outermost && disconnectReason == badPacketReason &&
+        !handlingDirectViolation && !handlingViolation) {
+        handlingBadPacketDisconnect = true;
+        captured = captureBadPacketDisconnect(
+                messageFromServer, messageBodyOverride);
+    }
+
+    if (originalOnDisconnect != nullptr) {
+        originalOnDisconnect(
+                handler, source, disconnectReason, disconnectStage,
+                messageFromServer, messageBodyOverride, skipMessage,
+                telemetryOverride);
+    }
+
+    if (outermost) {
+        handlingBadPacketDisconnect = false;
+        lastInboundPacket.valid = false;
+        // onDisconnect creates Minecraft's generic Block screen. Queue the
+        // Dobby window after that callback so the exact report stays visible.
         if (captured && runtimeState().autoPopup())
             showLatestViolation();
     }
@@ -408,6 +493,59 @@ bool installDirectViolationHook(const MinecraftImage& image) {
     return true;
 }
 
+bool installBadPacketDisconnectHooks(const MinecraftImage& image) {
+    const auto disconnectAddress = image.base + target::kOnDisconnectOffset;
+    const auto allowAddress = image.base + target::kAllowIncomingPacketIdOffset;
+    auto* disconnectSlot = reinterpret_cast<void**>(
+            image.base + target::kOnDisconnectVtableSlotOffset);
+    auto* allowSlot = reinterpret_cast<void**>(
+            image.base + target::kAllowIncomingPacketIdVtableSlotOffset);
+
+    const bool valid =
+            addressIsExecutable(image, disconnectAddress) &&
+            addressIsExecutable(image, allowAddress) &&
+            matchesSignature(
+                    reinterpret_cast<const void*>(disconnectAddress),
+                    target::kOnDisconnectSignature) &&
+            matchesSignature(
+                    reinterpret_cast<const void*>(allowAddress),
+                    target::kAllowIncomingPacketIdSignature) &&
+            *disconnectSlot == reinterpret_cast<void*>(disconnectAddress) &&
+            *allowSlot == reinterpret_cast<void*>(allowAddress);
+    if (!valid) {
+        logLine("ERROR: BadPacket disconnect correlation ABI mismatch");
+        return false;
+    }
+    if (mcpelauncher_patch == nullptr) {
+        logLine("ERROR: launcher patch API unavailable for BadPacket disconnect correlation");
+        return false;
+    }
+
+    originalOnDisconnect = reinterpret_cast<OnDisconnectFn>(*disconnectSlot);
+    originalAllowIncomingPacketId =
+            reinterpret_cast<AllowIncomingPacketIdFn>(*allowSlot);
+    void* allowReplacement = reinterpret_cast<void*>(allowIncomingPacketIdDetour);
+    if (!patchSchemaSlot(allowSlot, allowReplacement)) {
+        originalOnDisconnect = nullptr;
+        originalAllowIncomingPacketId = nullptr;
+        logLine("ERROR: launcher rejected allowIncomingPacketId hook");
+        return false;
+    }
+
+    void* disconnectReplacement = reinterpret_cast<void*>(onDisconnectDetour);
+    if (!patchSchemaSlot(disconnectSlot, disconnectReplacement)) {
+        void* original = reinterpret_cast<void*>(originalAllowIncomingPacketId);
+        patchSchemaSlot(allowSlot, original);
+        originalOnDisconnect = nullptr;
+        originalAllowIncomingPacketId = nullptr;
+        logLine("ERROR: launcher rejected onDisconnect hook");
+        return false;
+    }
+
+    logLine("installed BadPacket disconnect correlation hooks");
+    return true;
+}
+
 } // namespace
 
 void installPacketHooks() {
@@ -423,17 +561,26 @@ void installPacketHooks() {
     const bool packetEndProbe = installPacketEndProbe(image);
     const bool schemaProbe = installClientSchemaProbe(image);
     const bool streamProbe = byteTraceProbe || packetEndProbe;
+    const bool disconnectCorrelation = installBadPacketDisconnectHooks(image);
     const bool directViolationHook = installDirectViolationHook(image);
     const bool warningHook = installViolationHook(image);
-    if (!directViolationHook && !warningHook) {
+    if (!disconnectCorrelation && !directViolationHook && !warningHook) {
         runtimeState().setHookStatus("failed: violation hook unavailable", false, streamProbe);
         recordLifecycleEvent("hook_error", "direct and warning violation hooks unavailable");
         return;
     }
 
     runtimeState().setHookStatus(
-            directViolationHook && packetEndProbe && byteTraceProbe && schemaProbe
-                    ? "active: direct violation + boundary + byte/field trace"
+            disconnectCorrelation && directViolationHook && packetEndProbe &&
+                            byteTraceProbe && schemaProbe
+                    ? "active: disconnect/direct violation + boundary + byte/field trace"
+                    : disconnectCorrelation && directViolationHook &&
+                                      packetEndProbe && byteTraceProbe
+                    ? "active: disconnect/direct violation + exact packet boundary + byte trace"
+                    : disconnectCorrelation && directViolationHook && streamProbe
+                    ? "active: disconnect/direct violation + partial stream trace"
+                    : disconnectCorrelation && directViolationHook
+                    ? "active: disconnect/direct violation"
                     : directViolationHook && packetEndProbe && byteTraceProbe
                     ? "active: direct violation + exact packet boundary + byte trace"
                     : directViolationHook && streamProbe
@@ -446,10 +593,18 @@ void installPacketHooks() {
                     ? "active: warning violation + exact packet boundary + byte trace"
                     : streamProbe ? "active: warning violation + partial stream trace"
                                   : "active: warning violation only",
-            directViolationHook || warningHook, streamProbe);
+            disconnectCorrelation || directViolationHook || warningHook, streamProbe);
     recordLifecycleEvent(
-            "hook_ready", directViolationHook && packetEndProbe && byteTraceProbe && schemaProbe
-                    ? "direct packet violations, packet boundaries, byte tracing, and client field tracing active"
+            "hook_ready", disconnectCorrelation && directViolationHook &&
+                                  packetEndProbe && byteTraceProbe && schemaProbe
+                    ? "BadPacket disconnect correlation, direct packet violations, packet boundaries, byte tracing, and client field tracing active"
+                    : disconnectCorrelation && directViolationHook &&
+                                      packetEndProbe && byteTraceProbe
+                    ? "BadPacket disconnect correlation, direct packet violations, exact packet boundaries, and byte tracing active"
+                    : disconnectCorrelation && directViolationHook && streamProbe
+                    ? "BadPacket disconnect correlation, direct packet violations, and partial stream tracing active"
+                    : disconnectCorrelation && directViolationHook
+                    ? "BadPacket disconnect correlation and direct packet violations active; stream tracing unavailable"
                     : directViolationHook && packetEndProbe && byteTraceProbe
                     ? "direct packet violations, exact packet boundaries, and byte tracing active"
                     : directViolationHook && streamProbe

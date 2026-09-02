@@ -57,6 +57,12 @@ void testViolationDecoder() {
             dobby::target::kHandlePacketViolationVtableSlotOffset ==
             0x11f91410);
     static_assert(dobby::target::kHandlePacketViolationSignature[0] == 0xfd);
+    static_assert(dobby::target::kOnDisconnectOffset == 0x09adca1c);
+    static_assert(dobby::target::kOnDisconnectVtableSlotOffset == 0x11f913f0);
+    static_assert(dobby::target::kAllowIncomingPacketIdOffset == 0x09add910);
+    static_assert(
+            dobby::target::kAllowIncomingPacketIdVtableSlotOffset ==
+            0x11f913f8);
     std::array<std::byte, 0x80> packet{};
     store<std::int32_t>(packet.data() + dobby::kViolationTypeOffset, 0);
     store<std::int32_t>(packet.data() + dobby::kViolationSeverityOffset, 2);
@@ -97,6 +103,18 @@ void testViolationDecoder() {
     assert(directRecord->contextStorage == "short");
 
     assert(!dobby::decodeViolationArguments(3, 50, nullptr));
+
+    std::array<std::byte, 0x20> emptyAndroidString{};
+    const auto disconnectRecord = dobby::decodeBadPacketDisconnect(
+            63, 73669, emptyAndroidString.data(), emptyAndroidString.data());
+    assert(disconnectRecord);
+    assert(disconnectRecord->type == -1);
+    assert(disconnectRecord->severity == 2);
+    assert(disconnectRecord->packetId == 63);
+    assert(disconnectRecord->context.find(
+                   "DisconnectFailReason::BadPacket (90)") != std::string::npos);
+    assert(disconnectRecord->context.find("packet_size=73669") != std::string::npos);
+    assert(disconnectRecord->contextStorage == "disconnect_callback");
 }
 
 void testStreamProbeAndReport() {

@@ -75,6 +75,45 @@ std::optional<ViolationRecord> decodeViolationArguments(
     return result;
 }
 
+std::optional<ViolationRecord> decodeBadPacketDisconnect(
+        std::int32_t packetId, std::uint64_t packetSize,
+        const void* messageFromServer, const void* messageBodyOverride) {
+    if (messageFromServer == nullptr || messageBodyOverride == nullptr)
+        return std::nullopt;
+
+    const auto serverMessage = readAndroidString(
+            static_cast<const std::byte*>(messageFromServer));
+    const auto bodyOverride = readAndroidString(
+            static_cast<const std::byte*>(messageBodyOverride));
+    if (!serverMessage || !bodyOverride)
+        return std::nullopt;
+
+    ViolationRecord result;
+    // The disconnect callback exposes neither a serialized violation type nor
+    // a PacketViolationResponse. Reason 90 is itself a terminating BadPacket
+    // disconnect, so preserve the absent type and the observed severity.
+    result.type = -1;
+    result.severity = 2;
+    result.packetId = packetId;
+    result.context = "DisconnectFailReason::BadPacket (90)";
+    if (packetId >= 0) {
+        result.context += "\nallowIncomingPacketId packet_size=" +
+                          std::to_string(packetSize);
+    } else {
+        result.context += "\ninbound_packet_correlation=unavailable";
+    }
+    if (!serverMessage->value.empty()) {
+        result.context += "\nmessage_from_server=";
+        result.context.append(serverMessage->value);
+    }
+    if (!bodyOverride->value.empty()) {
+        result.context += "\nmessage_body_override=";
+        result.context.append(bodyOverride->value);
+    }
+    result.contextStorage = "disconnect_callback";
+    return result;
+}
+
 std::string violationObjectLayout(const ViolationRecord& record) {
     return
             "PacketViolationWarningPacket payload @ object + 0x30\n"

@@ -6,7 +6,7 @@
 
 namespace dobby {
 
-inline constexpr char kDobbyVersion[] = "2.12.1";
+inline constexpr char kDobbyVersion[] = "2.12.2";
 inline constexpr char kMinecraftVersion[] = "1.26.45.1";
 inline constexpr char kMinecraftBuildId[] = "868e275cb295e9a275bb29d2258edc2f7dc48761";
 inline constexpr char kMinecraftDataVersion[] = "1.26.40";
@@ -35,6 +35,22 @@ inline constexpr std::uintptr_t kHandlePacketViolationVtableSlotOffset = 0x11f91
 inline constexpr std::array<std::uint8_t, 16> kHandlePacketViolationSignature{
         0xfd, 0x7b, 0xba, 0xa9, 0xfc, 0x6f, 0x01, 0xa9,
         0xfa, 0x67, 0x02, 0xa9, 0xf8, 0x5f, 0x03, 0xa9};
+
+// NetEventCallback slots inherited by LegacyClientNetworkHandler. The packet
+// filter runs before decoding and exposes the exact inbound packet ID and
+// declared size. onDisconnect exposes BadPacket reason 90 after decoding has
+// failed, including any server/body error strings passed to the client.
+inline constexpr std::uintptr_t kOnDisconnectOffset = 0x09adca1c;
+inline constexpr std::uintptr_t kOnDisconnectVtableSlotOffset = 0x11f913f0;
+inline constexpr std::array<std::uint8_t, 16> kOnDisconnectSignature{
+        0xff, 0xc3, 0x03, 0xd1, 0xe8, 0x43, 0x00, 0xfd,
+        0xfd, 0x7b, 0x09, 0xa9, 0xfc, 0x6f, 0x0a, 0xa9};
+
+inline constexpr std::uintptr_t kAllowIncomingPacketIdOffset = 0x09add910;
+inline constexpr std::uintptr_t kAllowIncomingPacketIdVtableSlotOffset = 0x11f913f8;
+inline constexpr std::array<std::uint8_t, 16> kAllowIncomingPacketIdSignature{
+        0x5f, 0x14, 0x00, 0x71, 0x09, 0xc4, 0x42, 0x39,
+        0xe8, 0xd7, 0x9f, 0x1a, 0x08, 0x79, 0x1f, 0x53};
 
 inline constexpr std::uintptr_t kStreamReadOffset = 0x11a85d84;
 inline constexpr std::uintptr_t kStreamReadVtableSlotOffset = 0x124a89e0;

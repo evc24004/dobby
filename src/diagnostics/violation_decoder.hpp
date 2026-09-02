@@ -17,6 +17,9 @@ inline constexpr std::size_t kMaximumContextLength = 1024 * 1024;
 std::optional<ViolationRecord> decodeViolation(const void* packet);
 std::optional<ViolationRecord> decodeViolationArguments(
         std::int32_t response, std::int32_t packetId, const void* context);
+std::optional<ViolationRecord> decodeBadPacketDisconnect(
+        std::int32_t packetId, std::uint64_t packetSize,
+        const void* messageFromServer, const void* messageBodyOverride);
 std::string violationObjectLayout(const ViolationRecord& record);
 
 } // namespace dobby
