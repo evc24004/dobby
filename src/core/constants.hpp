@@ -6,7 +6,7 @@
 
 namespace dobby {
 
-inline constexpr char kDobbyVersion[] = "2.12.2";
+inline constexpr char kDobbyVersion[] = "2.13.0";
 inline constexpr char kMinecraftVersion[] = "1.26.45.1";
 inline constexpr char kMinecraftBuildId[] = "868e275cb295e9a275bb29d2258edc2f7dc48761";
 inline constexpr char kMinecraftDataVersion[] = "1.26.40";
@@ -21,6 +21,29 @@ inline constexpr std::size_t kMaximumRawCaptureLimit = 65536;
 namespace target {
 
 // All offsets and signatures are for the exact kMinecraftBuildId image.
+// PacketSecurityController::checkForViolation is the common inbound validation
+// choke point after packet size checks and Packet::_read deserialization. Its
+// expected result preserves the original error code before response handling
+// turns it into a generic BadPacket disconnect.
+inline constexpr std::uintptr_t kPacketSecurityCheckForViolationOffset = 0x0c2a4c8c;
+inline constexpr std::uintptr_t kPacketSecurityCheckForViolationVtableSlotOffset =
+        0x120a7948;
+inline constexpr std::array<std::uint8_t, 16>
+        kPacketSecurityCheckForViolationSignature{
+                0xfd, 0x7b, 0xbc, 0xa9, 0xf8, 0x5f, 0x01, 0xa9,
+                0xf6, 0x57, 0x02, 0xa9, 0xf4, 0x4f, 0x03, 0xa9};
+
+// Packet::read(ReadOnlyBinaryStream&) is shared by packet implementations and
+// returns Bedrock::Result<void> through x8 under the Android ARM64 ABI. The
+// representative PacketViolationWarningPacket vtable slot proves the shared
+// target before its entry is patched, covering direct and virtual calls.
+inline constexpr std::uintptr_t kPacketReadOffset = 0x0c2a3304;
+inline constexpr std::uintptr_t kPacketReadVerificationVtableSlotOffset =
+        0x12102098;
+inline constexpr std::array<std::uint8_t, 16> kPacketReadSignature{
+        0xff, 0x83, 0x06, 0xd1, 0xfd, 0x7b, 0x16, 0xa9,
+        0xfc, 0x5f, 0x17, 0xa9, 0xf6, 0x57, 0x18, 0xa9};
+
 inline constexpr std::uintptr_t kViolationGetIdOffset = 0x0cfa6b3c;
 inline constexpr std::uintptr_t kViolationGetIdVtableSlotOffset = 0x12102058;
 inline constexpr std::array<std::uint8_t, 8> kViolationGetIdSignature{

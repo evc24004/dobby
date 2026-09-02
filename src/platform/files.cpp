@@ -142,6 +142,11 @@ const std::string& latestPath() {
     return value;
 }
 
+const std::string& latestAiPath() {
+    static const std::string value = outputPath("latest-dobby-ai.json");
+    return value;
+}
+
 const std::string& clipboardPath() {
     static const std::string value = outputPath("dobby-clipboard.txt");
     return value;

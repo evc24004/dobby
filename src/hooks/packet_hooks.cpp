@@ -6,25 +6,36 @@
 #include "diagnostics/client_schema_trace.hpp"
 #include "diagnostics/report_builder.hpp"
 #include "diagnostics/stream_probe.hpp"
+#include "diagnostics/validation_decoder.hpp"
 #include "diagnostics/violation_decoder.hpp"
 #include "hooks/minecraft_image.hpp"
 #include "platform/files.hpp"
 #include "platform/launcher.hpp"
 #include "platform/log.hpp"
+#include "platform/safe_memory.hpp"
 #include "ui/developer_ui.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <vector>
 
 #if defined(__ANDROID__)
 
+#include <unwind.h>
+
 extern "C" void* dobby_stream_read_continue = nullptr;
 extern "C" void* dobby_packet_end_continue = nullptr;
+extern "C" void* dobby_packet_security_continue = nullptr;
+extern "C" void* dobby_packet_read_continue = nullptr;
+extern "C" void* dobby_handle_violation_continue = nullptr;
 
 extern "C" void dobby_capture_read_attempt(const void* stream, std::uint64_t requested) {
     dobby::captureStreamReadAttempt(stream, static_cast<std::size_t>(requested),
@@ -97,10 +108,69 @@ extern "C" [[gnu::naked]] void dobby_packet_end_detour() {
             "br x16\n");
 }
 
+extern "C" [[gnu::naked]] void dobby_packet_security_trampoline() {
+    asm volatile(
+            // Replay the exact four instructions replaced at the concrete
+            // PacketSecurityController entry, then execute the original body.
+            // The BL from the C++ detour supplies its own return address in
+            // x30, which the original prologue saves and later returns to.
+            "stp x29, x30, [sp, #-64]!\n"
+            "stp x24, x23, [sp, #16]\n"
+            "stp x22, x21, [sp, #32]\n"
+            "stp x20, x19, [sp, #48]\n"
+            "adrp x16, dobby_packet_security_continue\n"
+            "ldr x16, [x16, :lo12:dobby_packet_security_continue]\n"
+            "br x16\n");
+}
+
+extern "C" [[gnu::naked]] void dobby_packet_read_trampoline() {
+    asm volatile(
+            "sub sp, sp, #416\n"
+            "stp x29, x30, [sp, #352]\n"
+            "stp x28, x23, [sp, #368]\n"
+            "stp x22, x21, [sp, #384]\n"
+            "adrp x16, dobby_packet_read_continue\n"
+            "ldr x16, [x16, :lo12:dobby_packet_read_continue]\n"
+            "br x16\n");
+}
+
+extern "C" [[gnu::naked]] void dobby_packet_read_detour() {
+    asm volatile(
+            // x8 is the hidden Bedrock::Result<void> return storage. Preserve
+            // it, the Packet*, and the caller's link register across the
+            // original shared Packet::read body and the passive capture call.
+            "sub sp, sp, #48\n"
+            "stp x0, x1, [sp, #0]\n"
+            "str x8, [sp, #16]\n"
+            "str x30, [sp, #24]\n"
+            "bl dobby_packet_read_trampoline\n"
+            "ldr x0, [sp, #16]\n"
+            "ldr x1, [sp, #0]\n"
+            "bl dobby_capture_packet_read_result\n"
+            "ldr x8, [sp, #16]\n"
+            "ldr x30, [sp, #24]\n"
+            "add sp, sp, #48\n"
+            "ret\n");
+}
+
+extern "C" [[gnu::naked]] void dobby_handle_violation_trampoline() {
+    asm volatile(
+            "stp x29, x30, [sp, #-96]!\n"
+            "stp x28, x27, [sp, #16]\n"
+            "stp x26, x25, [sp, #32]\n"
+            "stp x24, x23, [sp, #48]\n"
+            "adrp x16, dobby_handle_violation_continue\n"
+            "ldr x16, [x16, :lo12:dobby_handle_violation_continue]\n"
+            "br x16\n");
+}
+
 namespace dobby {
 namespace {
 
 using GetIdFn = std::int32_t (*)(const void* packet);
+using PacketSecurityCheckForViolationFn = std::int32_t (*)(
+        void* controller, std::int32_t packetId, std::uint8_t clientSubId,
+        const void* expectedResult, bool* outNewOrUpdated);
 using HandlePacketViolationFn = void (*)(
         void* handler, const void* packetSecurityController,
         const void* errorCode, std::int32_t response, std::int32_t packetId,
@@ -116,7 +186,12 @@ using OnDisconnectFn = void (*)(
         const void* messageBodyOverride, bool skipMessage,
         const void* telemetryOverride);
 GetIdFn originalViolationGetId = nullptr;
-HandlePacketViolationFn originalHandlePacketViolation = nullptr;
+// These are deliberately volatile. Their targets are naked trampolines whose
+// inline assembly consumes the complete entry ABI; keeping calls indirect
+// prevents the compiler from proving the C++ parameter list unused and
+// eliding argument restoration at the call site.
+PacketSecurityCheckForViolationFn volatile originalPacketSecurityCheckForViolation = nullptr;
+HandlePacketViolationFn volatile originalHandlePacketViolation = nullptr;
 AllowIncomingPacketIdFn originalAllowIncomingPacketId = nullptr;
 OnDisconnectFn originalOnDisconnect = nullptr;
 std::atomic_bool schemaTraceEnabled{false};
@@ -125,6 +200,7 @@ thread_local bool handlingDirectViolation = false;
 thread_local bool handlingBadPacketDisconnect = false;
 thread_local const void* lastViolationPacket = nullptr;
 thread_local std::chrono::steady_clock::time_point lastViolationAt{};
+MinecraftImage minecraftImage;
 
 struct InboundPacketObservation {
     std::int32_t packetId{-1};
@@ -134,11 +210,236 @@ struct InboundPacketObservation {
 };
 
 thread_local InboundPacketObservation lastInboundPacket;
+constexpr std::size_t packetHistoryCapacity = 32;
+thread_local std::array<InboundPacketObservation, packetHistoryCapacity> inboundPacketHistory;
+thread_local std::size_t inboundPacketHistoryNext = 0;
+thread_local std::size_t inboundPacketHistoryCount = 0;
+
+struct UniversalValidationObservation {
+    std::int32_t packetId{-1};
+    std::chrono::steady_clock::time_point capturedAt{};
+    std::optional<StreamFailure> streamFailure;
+    std::optional<ValidationEvidence> validation;
+    bool valid{false};
+};
+
+thread_local UniversalValidationObservation lastUniversalValidation;
+
+struct UnwindCapture {
+    std::vector<std::uint64_t>* offsets{};
+};
+
+_Unwind_Reason_Code captureMinecraftFrame(
+        _Unwind_Context* context, void* argument) {
+    auto& capture = *static_cast<UnwindCapture*>(argument);
+    const auto programCounter = static_cast<std::uintptr_t>(
+            _Unwind_GetIP(context));
+    if (addressIsExecutable(minecraftImage, programCounter) &&
+        capture.offsets->size() < 16) {
+        capture.offsets->push_back(programCounter - minecraftImage.base);
+    }
+    return capture.offsets->size() >= 16
+            ? _URC_END_OF_STACK : _URC_NO_REASON;
+}
+
+std::vector<std::uint64_t> captureMinecraftStack() {
+    std::vector<std::uint64_t> offsets;
+    offsets.reserve(16);
+    UnwindCapture capture{&offsets};
+    _Unwind_Backtrace(captureMinecraftFrame, &capture);
+    return offsets;
+}
+
+std::vector<PacketHistoryEntry> snapshotInboundPacketHistory(
+        std::chrono::steady_clock::time_point now) {
+    std::vector<PacketHistoryEntry> result;
+    result.reserve(inboundPacketHistoryCount);
+    const auto oldest =
+            (inboundPacketHistoryNext + packetHistoryCapacity - inboundPacketHistoryCount) %
+            packetHistoryCapacity;
+    for (std::size_t index = 0; index < inboundPacketHistoryCount; ++index) {
+        const auto& packet = inboundPacketHistory[(oldest + index) % packetHistoryCapacity];
+        if (!packet.valid)
+            continue;
+        const auto age = now >= packet.observedAt
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                          now - packet.observedAt).count()
+                : 0;
+        result.push_back({
+                packet.packetId, packet.packetSize,
+                static_cast<std::uint64_t>(age)});
+    }
+    return result;
+}
+
+void rememberInboundPacket(const InboundPacketObservation& packet) {
+    inboundPacketHistory[inboundPacketHistoryNext] = packet;
+    inboundPacketHistoryNext = (inboundPacketHistoryNext + 1) % packetHistoryCapacity;
+    inboundPacketHistoryCount = std::min(
+            inboundPacketHistoryCount + 1, packetHistoryCapacity);
+}
+
+void readErrorText(
+        std::int32_t errorValue, const void* errorCategory,
+        std::string& categoryText, std::string& messageText) {
+    if (errorCategory == nullptr)
+        return;
+    try {
+        const auto* category = static_cast<const std::error_category*>(
+                errorCategory);
+        if (const auto* name = category->name(); name != nullptr)
+            categoryText = name;
+        messageText = std::error_code(errorValue, *category).message();
+    } catch (...) {
+        categoryText = "unavailable";
+        messageText = "error category formatting failed";
+    }
+    constexpr std::size_t maximumTextLength = 1024;
+    if (categoryText.size() > maximumTextLength)
+        categoryText.resize(maximumTextLength);
+    if (messageText.size() > maximumTextLength)
+        messageText.resize(maximumTextLength);
+}
+
+ValidationSourceEvidence sourceEvidence(const ValidationSourceFrame& frame) {
+    return {
+            frame.filenameHash, frame.filename, frame.line, frame.context};
+}
+
+void populateValidationProvenance(
+        const ValidationResultView& view, ValidationEvidence& evidence) {
+    readErrorText(
+            view.errorValue, view.errorCategory,
+            evidence.errorCategory, evidence.errorMessage);
+    evidence.provenanceTruncated = view.provenanceTruncated;
+    evidence.sourceFrames.reserve(view.sourceFrames.size());
+    for (const auto& frame : view.sourceFrames)
+        evidence.sourceFrames.push_back(sourceEvidence(frame));
+    evidence.nestedErrors.reserve(view.nestedErrors.size());
+    for (const auto& nested : view.nestedErrors) {
+        ValidationNestedErrorEvidence nestedEvidence;
+        nestedEvidence.depth = nested.depth;
+        nestedEvidence.errorValue = nested.errorValue;
+        readErrorText(
+                nested.errorValue, nested.errorCategory,
+                nestedEvidence.errorCategory, nestedEvidence.errorMessage);
+        nestedEvidence.sourceFrames.reserve(nested.sourceFrames.size());
+        for (const auto& frame : nested.sourceFrames)
+            nestedEvidence.sourceFrames.push_back(sourceEvidence(frame));
+        evidence.nestedErrors.push_back(std::move(nestedEvidence));
+    }
+}
+
+bool recentUniversalEvidence(
+        std::int32_t packetId, std::optional<StreamFailure>& streamFailure,
+        std::optional<ValidationEvidence>& validation) {
+    const auto now = std::chrono::steady_clock::now();
+    if (!lastUniversalValidation.valid ||
+        lastUniversalValidation.packetId != packetId ||
+        now - lastUniversalValidation.capturedAt > std::chrono::seconds(10)) {
+        return false;
+    }
+    streamFailure = lastUniversalValidation.streamFailure;
+    validation = lastUniversalValidation.validation;
+    return true;
+}
 
 void persistDiagnostic(const Diagnostic& diagnostic) {
     writeFile(latestPath(), diagnostic.report, "w");
+    writeFileAtomically(latestAiPath(), diagnostic.json + "\n");
     writeFile(eventPath(), diagnostic.json + "\n", "a");
     logLine(diagnostic.json);
+}
+
+void captureValidationFailure(
+        const ValidationResultView& decoded, std::int32_t packetId,
+        std::int32_t response, bool newOrUpdated, const char* intercept,
+        const char* context) {
+    ValidationEvidence evidence;
+    evidence.resultSuccess = false;
+    evidence.response = response;
+    evidence.newOrUpdated = newOrUpdated;
+    evidence.errorValue = decoded.errorValue;
+    populateValidationProvenance(decoded, evidence);
+    evidence.nativeStackImageOffsets = captureMinecraftStack();
+    const auto now = std::chrono::steady_clock::now();
+    evidence.recentPackets = snapshotInboundPacketHistory(now);
+
+    auto streamFailure = recentStreamFailure(std::chrono::seconds(10));
+    lastUniversalValidation = {
+            packetId, now, streamFailure, evidence, true};
+
+    const auto severity = response >= 1 && response <= 3 ? response - 1 : -1;
+    ViolationRecord record{
+            -1, severity, packetId, context, "validation_result"};
+    auto diagnostic = buildDiagnostic(
+            record, std::move(streamFailure), intercept, evidence);
+    persistDiagnostic(diagnostic);
+    runtimeState().addDiagnostic(std::move(diagnostic));
+}
+
+extern "C" void dobby_capture_packet_read_result(
+        const void* expectedResult, const void*) {
+    if (expectedResult == nullptr)
+        return;
+    std::uint8_t hasValue = 0;
+    std::memcpy(
+            &hasValue,
+            static_cast<const std::byte*>(expectedResult) +
+                    kExpectedHasValueOffset,
+            sizeof(hasValue));
+    if ((hasValue & 1U) != 0U)
+        return;
+
+    const auto decoded = decodeValidationResult(expectedResult);
+    if (!decoded || decoded->success)
+        return;
+
+    const auto now = std::chrono::steady_clock::now();
+    const bool hasRecentPacket = lastInboundPacket.valid &&
+            now - lastInboundPacket.observedAt <= std::chrono::seconds(10);
+    const auto packetId = hasRecentPacket ? lastInboundPacket.packetId : -1;
+    captureValidationFailure(
+            *decoded, packetId, -1, false,
+            "Packet::read(ReadOnlyBinaryStream&) inline return",
+            "Packet::read returned a deserialize error");
+}
+
+std::int32_t packetSecurityCheckForViolationDetour(
+        void* controller, std::int32_t packetId, std::uint8_t clientSubId,
+        const void* expectedResult, bool* outNewOrUpdated) {
+    const auto response = originalPacketSecurityCheckForViolation != nullptr
+            ? originalPacketSecurityCheckForViolation(
+                      controller, packetId, clientSubId, expectedResult,
+                      outNewOrUpdated)
+            : 0;
+
+    if (expectedResult == nullptr)
+        return response;
+    std::uint8_t hasValue = 0;
+    std::memcpy(
+            &hasValue,
+            static_cast<const std::byte*>(expectedResult) +
+                    kExpectedHasValueOffset,
+            sizeof(hasValue));
+    if ((hasValue & 1U) != 0U)
+        return response;
+
+    const auto decoded = decodeValidationResult(expectedResult);
+    if (!decoded || decoded->success)
+        return response;
+
+    bool newOrUpdated = false;
+    if (outNewOrUpdated != nullptr) {
+        std::array<std::byte, 1> value{};
+        if (copyReadableMemory(outNewOrUpdated, value))
+            newOrUpdated = value[0] != std::byte{0};
+    }
+    captureValidationFailure(
+            *decoded, packetId, response, newOrUpdated,
+            "PacketSecurityController::checkForViolation inline entry",
+            "PacketSecurityController::checkForViolation rejected inbound packet");
+    return response;
 }
 
 void handleViolation(const char* intercept, const void* packet) {
@@ -158,8 +459,11 @@ void handleViolation(const char* intercept, const void* packet) {
         return;
     }
 
+    auto streamFailure = recentStreamFailure(std::chrono::seconds(10));
+    std::optional<ValidationEvidence> validation;
+    recentUniversalEvidence(record->packetId, streamFailure, validation);
     auto diagnostic = buildDiagnostic(
-            *record, recentStreamFailure(std::chrono::seconds(10)), intercept);
+            *record, std::move(streamFailure), intercept, std::move(validation));
     persistDiagnostic(diagnostic);
     runtimeState().addDiagnostic(std::move(diagnostic));
 
@@ -171,7 +475,8 @@ void handleViolation(const char* intercept, const void* packet) {
 }
 
 bool captureDirectViolation(
-        std::int32_t response, std::int32_t packetId, const void* context) {
+        std::int32_t response, std::int32_t packetId,
+        const void* errorCode, const void* context) {
     if (handlingViolation)
         return false;
     handlingViolation = true;
@@ -183,9 +488,30 @@ bool captureDirectViolation(
         return false;
     }
 
+    auto streamFailure = recentStreamFailure(std::chrono::seconds(10));
+    std::optional<ValidationEvidence> validation;
+    recentUniversalEvidence(packetId, streamFailure, validation);
+    if (!validation) {
+        const auto decodedError = decodeErrorCode(errorCode);
+        if (decodedError) {
+            ValidationEvidence directEvidence;
+            directEvidence.resultSuccess = false;
+            directEvidence.response = response;
+            directEvidence.errorValue = decodedError->value;
+            readErrorText(
+                    decodedError->value, decodedError->category,
+                    directEvidence.errorCategory,
+                    directEvidence.errorMessage);
+            directEvidence.nativeStackImageOffsets = captureMinecraftStack();
+            directEvidence.recentPackets = snapshotInboundPacketHistory(
+                    std::chrono::steady_clock::now());
+            validation = std::move(directEvidence);
+        }
+    }
     auto diagnostic = buildDiagnostic(
-            *record, recentStreamFailure(std::chrono::seconds(10)),
-            "ClientNetworkHandler::handlePacketViolation vtable");
+            *record, std::move(streamFailure),
+            "ClientNetworkHandler::handlePacketViolation inline entry",
+            std::move(validation));
     persistDiagnostic(diagnostic);
     runtimeState().addDiagnostic(std::move(diagnostic));
     handlingViolation = false;
@@ -202,7 +528,8 @@ void handlePacketViolationDetour(
     bool captured = false;
     if (outermost) {
         handlingDirectViolation = true;
-        captured = captureDirectViolation(response, packetId, context);
+        captured = captureDirectViolation(
+                response, packetId, errorCode, context);
     }
 
     if (originalHandlePacketViolation != nullptr) {
@@ -227,6 +554,7 @@ std::int32_t allowIncomingPacketIdDetour(
         std::int32_t packetId, std::uint64_t packetSize) {
     lastInboundPacket = {
             packetId, packetSize, std::chrono::steady_clock::now(), true};
+    rememberInboundPacket(lastInboundPacket);
     return originalAllowIncomingPacketId != nullptr
             ? originalAllowIncomingPacketId(
                       handler, networkIdentifierWithSubId, packetId, packetSize)
@@ -247,9 +575,13 @@ bool captureBadPacketDisconnect(
         return false;
     }
 
+    auto streamFailure = recentStreamFailure(std::chrono::seconds(10));
+    std::optional<ValidationEvidence> validation;
+    recentUniversalEvidence(packetId, streamFailure, validation);
     auto diagnostic = buildDiagnostic(
-            *record, recentStreamFailure(std::chrono::seconds(10)),
-            "ClientNetworkHandler::onDisconnect BadPacket + allowIncomingPacketId");
+            *record, std::move(streamFailure),
+            "ClientNetworkHandler::onDisconnect BadPacket + allowIncomingPacketId",
+            std::move(validation));
     persistDiagnostic(diagnostic);
     runtimeState().addDiagnostic(std::move(diagnostic));
     return true;
@@ -431,6 +763,96 @@ bool installPacketEndProbe(const MinecraftImage& image) {
     return true;
 }
 
+bool installPacketReadResultHook(const MinecraftImage& image) {
+    const auto functionAddress = image.base + target::kPacketReadOffset;
+    auto* verificationSlot = reinterpret_cast<void**>(
+            image.base + target::kPacketReadVerificationVtableSlotOffset);
+    const bool valid =
+            addressIsExecutable(image, functionAddress) &&
+            matchesSignature(
+                    reinterpret_cast<const void*>(functionAddress),
+                    target::kPacketReadSignature) &&
+            *verificationSlot == reinterpret_cast<void*>(functionAddress);
+    if (!valid) {
+        logLine("ERROR: Packet::read ABI mismatch; universal deserialize-result capture disabled");
+        return false;
+    }
+    if (mcpelauncher_patch == nullptr) {
+        logLine("ERROR: launcher patch API unavailable for Packet::read result capture");
+        return false;
+    }
+
+    std::array<std::uint8_t, 16> replacement{};
+    constexpr std::uint32_t loadTarget = 0x58000050U;
+    constexpr std::uint32_t branchTarget = 0xd61f0200U;
+    const auto detour = reinterpret_cast<std::uintptr_t>(
+            dobby_packet_read_detour);
+    std::memcpy(replacement.data(), &loadTarget, sizeof(loadTarget));
+    std::memcpy(replacement.data() + 4, &branchTarget, sizeof(branchTarget));
+    std::memcpy(replacement.data() + 8, &detour, sizeof(detour));
+
+    dobby_packet_read_continue =
+            reinterpret_cast<void*>(functionAddress + replacement.size());
+    auto* entry = reinterpret_cast<void*>(functionAddress);
+    if (mcpelauncher_patch(
+                entry, replacement.data(), replacement.size()) == nullptr ||
+        std::memcmp(entry, replacement.data(), replacement.size()) != 0) {
+        dobby_packet_read_continue = nullptr;
+        logLine("ERROR: launcher rejected Packet::read result hook");
+        return false;
+    }
+    logLine("installed universal Packet::read deserialize-result inline hook");
+    return true;
+}
+
+bool installUniversalValidationHook(const MinecraftImage& image) {
+    const auto functionAddress =
+            image.base + target::kPacketSecurityCheckForViolationOffset;
+    auto* slot = reinterpret_cast<void**>(
+            image.base +
+            target::kPacketSecurityCheckForViolationVtableSlotOffset);
+    const bool valid =
+            addressIsExecutable(image, functionAddress) &&
+            matchesSignature(
+                    reinterpret_cast<const void*>(functionAddress),
+                    target::kPacketSecurityCheckForViolationSignature) &&
+            *slot == reinterpret_cast<void*>(functionAddress);
+    if (!valid) {
+        logLine("ERROR: PacketSecurityController::checkForViolation ABI mismatch; universal validation capture disabled");
+        return false;
+    }
+    if (mcpelauncher_patch == nullptr) {
+        logLine("ERROR: launcher patch API unavailable for universal validation capture");
+        return false;
+    }
+
+    std::array<std::uint8_t, 16> replacement{};
+    constexpr std::uint32_t loadTarget = 0x58000050U;
+    constexpr std::uint32_t branchTarget = 0xd61f0200U;
+    const auto detour = reinterpret_cast<std::uintptr_t>(
+            packetSecurityCheckForViolationDetour);
+    std::memcpy(replacement.data(), &loadTarget, sizeof(loadTarget));
+    std::memcpy(replacement.data() + 4, &branchTarget, sizeof(branchTarget));
+    std::memcpy(replacement.data() + 8, &detour, sizeof(detour));
+
+    dobby_packet_security_continue =
+            reinterpret_cast<void*>(functionAddress + replacement.size());
+    originalPacketSecurityCheckForViolation =
+            reinterpret_cast<PacketSecurityCheckForViolationFn>(
+                    dobby_packet_security_trampoline);
+    auto* entry = reinterpret_cast<void*>(functionAddress);
+    if (mcpelauncher_patch(
+                entry, replacement.data(), replacement.size()) == nullptr ||
+        std::memcmp(entry, replacement.data(), replacement.size()) != 0) {
+        dobby_packet_security_continue = nullptr;
+        originalPacketSecurityCheckForViolation = nullptr;
+        logLine("ERROR: launcher rejected PacketSecurityController::checkForViolation hook");
+        return false;
+    }
+    logLine("installed universal PacketSecurityController::checkForViolation inline hook");
+    return true;
+}
+
 bool installViolationHook(const MinecraftImage& image) {
     const auto functionAddress = image.base + target::kViolationGetIdOffset;
     if (!addressIsExecutable(image, functionAddress) ||
@@ -480,16 +902,30 @@ bool installDirectViolationHook(const MinecraftImage& image) {
         return false;
     }
 
+    std::array<std::uint8_t, 16> replacement{};
+    constexpr std::uint32_t loadTarget = 0x58000050U;
+    constexpr std::uint32_t branchTarget = 0xd61f0200U;
+    const auto detour = reinterpret_cast<std::uintptr_t>(
+            handlePacketViolationDetour);
+    std::memcpy(replacement.data(), &loadTarget, sizeof(loadTarget));
+    std::memcpy(replacement.data() + 4, &branchTarget, sizeof(branchTarget));
+    std::memcpy(replacement.data() + 8, &detour, sizeof(detour));
+
+    dobby_handle_violation_continue =
+            reinterpret_cast<void*>(functionAddress + replacement.size());
     originalHandlePacketViolation =
-            reinterpret_cast<HandlePacketViolationFn>(*slot);
-    void* replacement = reinterpret_cast<void*>(handlePacketViolationDetour);
-    if (mcpelauncher_patch(slot, &replacement, sizeof(replacement)) == nullptr ||
-        *slot != replacement) {
+            reinterpret_cast<HandlePacketViolationFn>(
+                    dobby_handle_violation_trampoline);
+    auto* entry = reinterpret_cast<void*>(functionAddress);
+    if (mcpelauncher_patch(
+                entry, replacement.data(), replacement.size()) == nullptr ||
+        std::memcmp(entry, replacement.data(), replacement.size()) != 0) {
+        dobby_handle_violation_continue = nullptr;
         originalHandlePacketViolation = nullptr;
         logLine("ERROR: launcher rejected ClientNetworkHandler::handlePacketViolation hook");
         return false;
     }
-    logLine("installed ClientNetworkHandler::handlePacketViolation hook");
+    logLine("installed ClientNetworkHandler::handlePacketViolation inline hook");
     return true;
 }
 
@@ -556,68 +992,50 @@ void installPacketHooks() {
         logLine("ERROR: libminecraftpe.so not found");
         return;
     }
+    minecraftImage = image;
 
     const bool byteTraceProbe = installStreamProbe(image);
     const bool packetEndProbe = installPacketEndProbe(image);
     const bool schemaProbe = installClientSchemaProbe(image);
     const bool streamProbe = byteTraceProbe || packetEndProbe;
+    const bool packetReadResult = installPacketReadResultHook(image);
+    const bool universalValidation = installUniversalValidationHook(image);
     const bool disconnectCorrelation = installBadPacketDisconnectHooks(image);
     const bool directViolationHook = installDirectViolationHook(image);
     const bool warningHook = installViolationHook(image);
-    if (!disconnectCorrelation && !directViolationHook && !warningHook) {
+    if (!packetReadResult && !universalValidation && !disconnectCorrelation &&
+        !directViolationHook && !warningHook) {
         runtimeState().setHookStatus("failed: violation hook unavailable", false, streamProbe);
-        recordLifecycleEvent("hook_error", "direct and warning violation hooks unavailable");
+        recordLifecycleEvent("hook_error", "universal, direct, disconnect, and warning violation hooks unavailable");
         return;
     }
 
+    const bool complete = packetReadResult && universalValidation && disconnectCorrelation &&
+            directViolationHook && warningHook && byteTraceProbe &&
+            packetEndProbe && schemaProbe;
+    const std::string status = complete
+            ? "active: universal read/validation + disconnect/warning + byte/field trace"
+            : packetReadResult && universalValidation && streamProbe
+            ? "active: universal read/validation + partial downstream/stream capture"
+            : universalValidation && streamProbe
+            ? "active: universal validation + partial downstream/stream capture"
+            : universalValidation
+            ? "active: universal validation; downstream/stream capture partial"
+            : packetReadResult && streamProbe
+            ? "active: universal deserialize results + partial downstream/stream capture"
+            : packetReadResult
+            ? "active: universal deserialize results; validation/downstream capture partial"
+            : "active: fallback violation capture; universal validation unavailable";
     runtimeState().setHookStatus(
-            disconnectCorrelation && directViolationHook && packetEndProbe &&
-                            byteTraceProbe && schemaProbe
-                    ? "active: disconnect/direct violation + boundary + byte/field trace"
-                    : disconnectCorrelation && directViolationHook &&
-                                      packetEndProbe && byteTraceProbe
-                    ? "active: disconnect/direct violation + exact packet boundary + byte trace"
-                    : disconnectCorrelation && directViolationHook && streamProbe
-                    ? "active: disconnect/direct violation + partial stream trace"
-                    : disconnectCorrelation && directViolationHook
-                    ? "active: disconnect/direct violation"
-                    : directViolationHook && packetEndProbe && byteTraceProbe
-                    ? "active: direct violation + exact packet boundary + byte trace"
-                    : directViolationHook && streamProbe
-                    ? "active: direct violation + partial stream trace"
-                    : directViolationHook
-                    ? "active: direct violation"
-                    : packetEndProbe && byteTraceProbe && schemaProbe
-                    ? "active: warning violation + boundary + byte/field trace"
-                    : packetEndProbe && byteTraceProbe
-                    ? "active: warning violation + exact packet boundary + byte trace"
-                    : streamProbe ? "active: warning violation + partial stream trace"
-                                  : "active: warning violation only",
-            disconnectCorrelation || directViolationHook || warningHook, streamProbe);
+            status,
+            packetReadResult || universalValidation || disconnectCorrelation ||
+                    directViolationHook || warningHook,
+            streamProbe);
     recordLifecycleEvent(
-            "hook_ready", disconnectCorrelation && directViolationHook &&
-                                  packetEndProbe && byteTraceProbe && schemaProbe
-                    ? "BadPacket disconnect correlation, direct packet violations, packet boundaries, byte tracing, and client field tracing active"
-                    : disconnectCorrelation && directViolationHook &&
-                                      packetEndProbe && byteTraceProbe
-                    ? "BadPacket disconnect correlation, direct packet violations, exact packet boundaries, and byte tracing active"
-                    : disconnectCorrelation && directViolationHook && streamProbe
-                    ? "BadPacket disconnect correlation, direct packet violations, and partial stream tracing active"
-                    : disconnectCorrelation && directViolationHook
-                    ? "BadPacket disconnect correlation and direct packet violations active; stream tracing unavailable"
-                    : directViolationHook && packetEndProbe && byteTraceProbe
-                    ? "direct packet violations, exact packet boundaries, and byte tracing active"
-                    : directViolationHook && streamProbe
-                    ? "direct packet violations and partial stream tracing active"
-                    : directViolationHook
-                    ? "direct packet violations active; stream tracing unavailable"
-                    : packetEndProbe && byteTraceProbe && schemaProbe
-                    ? "warning packet violations, packet boundaries, byte tracing, and client field tracing active"
-                    : packetEndProbe && byteTraceProbe
-                    ? "warning packet violations, exact packet boundaries, and byte tracing active"
-                    : streamProbe
-                    ? "warning packet violations and partial stream tracing active"
-                    : "warning packet violations active; stream tracing unavailable");
+            "hook_ready",
+            complete
+                    ? "universal inbound deserialize results and validation, downstream violations, disconnect correlation, packet boundaries, byte tracing, and client field tracing active"
+                    : status);
     logLine(std::string("READY: Dobby ") + kDobbyVersion + " developer diagnostics active");
 }
 

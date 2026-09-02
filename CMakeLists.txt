@@ -39,6 +39,7 @@ set(DOBBY_COMMON_SOURCES
     src/diagnostics/protocol_dump.cpp
     src/diagnostics/report_builder.cpp
     src/diagnostics/stream_probe.cpp
+    src/diagnostics/validation_decoder.cpp
     src/diagnostics/violation_decoder.cpp
     src/metrics/chunk_metrics_layout.cpp
     src/metrics/client_performance.cpp

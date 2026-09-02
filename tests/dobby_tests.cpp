@@ -6,6 +6,7 @@
 #include "diagnostics/protocol_dump.hpp"
 #include "diagnostics/report_builder.hpp"
 #include "diagnostics/stream_probe.hpp"
+#include "diagnostics/validation_decoder.hpp"
 #include "diagnostics/violation_decoder.hpp"
 #include "hooks/render_camera.hpp"
 #include "hooks/overlay_camera_hook.hpp"
@@ -52,6 +53,19 @@ void store(std::byte* destination, T value) {
 }
 
 void testViolationDecoder() {
+    static_assert(
+            dobby::target::kPacketSecurityCheckForViolationOffset ==
+            0x0c2a4c8c);
+    static_assert(
+            dobby::target::kPacketSecurityCheckForViolationVtableSlotOffset ==
+            0x120a7948);
+    static_assert(
+            dobby::target::kPacketSecurityCheckForViolationSignature[0] == 0xfd);
+    static_assert(dobby::target::kPacketReadOffset == 0x0c2a3304);
+    static_assert(
+            dobby::target::kPacketReadVerificationVtableSlotOffset ==
+            0x12102098);
+    static_assert(dobby::target::kPacketReadSignature[0] == 0xff);
     static_assert(dobby::target::kHandlePacketViolationOffset == 0x09add934);
     static_assert(
             dobby::target::kHandlePacketViolationVtableSlotOffset ==
@@ -117,6 +131,85 @@ void testViolationDecoder() {
     assert(disconnectRecord->contextStorage == "disconnect_callback");
 }
 
+void testUniversalValidationDecoder() {
+    std::array<std::byte, dobby::kErrorCodeSize> errorCode{};
+    store<std::int32_t>(errorCode.data(), 90);
+    const auto* directCategory = reinterpret_cast<const void*>(0x87654321ULL);
+    store<const void*>(errorCode.data() + 8, directCategory);
+    const auto directError = dobby::decodeErrorCode(errorCode.data());
+    require(directError.has_value());
+    require(directError->value == 90);
+    require(directError->category == directCategory);
+    require(!dobby::decodeErrorCode(nullptr).has_value());
+
+    std::array<std::byte, dobby::kExpectedResultSize> result{};
+    result[dobby::kExpectedHasValueOffset] = std::byte{1};
+    const auto success = dobby::decodeValidationResult(result.data());
+    require(success.has_value());
+    require(success->success);
+
+    result[dobby::kExpectedHasValueOffset] = std::byte{0};
+    store<std::int32_t>(
+            result.data() + dobby::kExpectedErrorValueOffset, 90);
+    const auto* category = reinterpret_cast<const void*>(0x12345678ULL);
+    store<const void*>(
+            result.data() + dobby::kExpectedErrorCategoryOffset, category);
+    const std::string sourceFilename = "MovePlayerPacket.cpp";
+    const std::string sourceContext = "validate position Y";
+    std::array<std::byte, dobby::kCallStackFrameSize> sourceFrame{};
+    store<std::uint64_t>(sourceFrame.data(), 0xaabbccddULL);
+    store<const char*>(sourceFrame.data() + 0x08, sourceFilename.data());
+    store<std::size_t>(sourceFrame.data() + 0x10, sourceFilename.size());
+    store<std::uint32_t>(sourceFrame.data() + 0x18, 417);
+    sourceFrame[0x20] = static_cast<std::byte>(sourceContext.size() << 1U);
+    std::memcpy(sourceFrame.data() + 0x21, sourceContext.data(), sourceContext.size());
+    sourceFrame[0x48] = std::byte{1};
+    store<const std::byte*>(
+            result.data() + dobby::kErrorInfoCallStackOffset,
+            sourceFrame.data());
+    store<const std::byte*>(
+            result.data() + dobby::kErrorInfoCallStackOffset + 8,
+            sourceFrame.data() + sourceFrame.size());
+    store<const std::byte*>(
+            result.data() + dobby::kErrorInfoCallStackOffset + 16,
+            sourceFrame.data() + sourceFrame.size());
+
+    std::array<std::byte, dobby::kErrorInfoSize> nestedError{};
+    store<std::int32_t>(nestedError.data(), 22);
+    store<const void*>(nestedError.data() + 0x08, category);
+    store<const std::byte*>(nestedError.data() + 0x10, sourceFrame.data());
+    store<const std::byte*>(
+            nestedError.data() + 0x18,
+            sourceFrame.data() + sourceFrame.size());
+    store<const std::byte*>(
+            nestedError.data() + 0x20,
+            sourceFrame.data() + sourceFrame.size());
+    store<const std::byte*>(
+            result.data() + dobby::kErrorInfoStackErrorsOffset,
+            nestedError.data());
+    store<const std::byte*>(
+            result.data() + dobby::kErrorInfoStackErrorsOffset + 8,
+            nestedError.data() + nestedError.size());
+    store<const std::byte*>(
+            result.data() + dobby::kErrorInfoStackErrorsOffset + 16,
+            nestedError.data() + nestedError.size());
+    const auto failure = dobby::decodeValidationResult(result.data());
+    require(failure.has_value());
+    require(!failure->success);
+    require(failure->errorValue == 90);
+    require(failure->errorCategory == category);
+    require(failure->sourceFrames.size() == 1);
+    require(failure->sourceFrames[0].filename == sourceFilename);
+    require(failure->sourceFrames[0].line == 417);
+    require(failure->sourceFrames[0].context == sourceContext);
+    require(failure->nestedErrors.size() == 1);
+    require(failure->nestedErrors[0].depth == 1);
+    require(failure->nestedErrors[0].errorValue == 22);
+    require(failure->nestedErrors[0].sourceFrames.size() == 1);
+    require(!failure->provenanceTruncated);
+    require(!dobby::decodeValidationResult(nullptr).has_value());
+}
+
 void testStreamProbeAndReport() {
     const std::array<std::uint8_t, 6> body{0x01, 0x02, 0x03, 0x04, 0xaa, 0xbb};
     std::array<std::byte, 0x48> stream{};
@@ -130,7 +223,11 @@ void testStreamProbeAndReport() {
     store<std::size_t>(stream.data() + dobby::kStreamReadPointerOffset, 2);
     dobby::captureStreamReadAttempt(stream.data(), 2, 2048);
     store<std::size_t>(stream.data() + dobby::kStreamReadPointerOffset, 4);
+    dobby::pushClientSchemaMember("Position");
+    dobby::pushClientSchemaMember("Y");
     dobby::captureStreamReadAttempt(stream.data(), 4, 2048);
+    dobby::popClientSchemaContext();
+    dobby::popClientSchemaContext();
     auto failure = dobby::recentStreamFailure(std::chrono::seconds(1));
     assert(failure);
     assert(failure->overflowObserved);
@@ -144,9 +241,36 @@ void testStreamProbeAndReport() {
     assert(failure->attempts.back().overflow);
 
     dobby::ViolationRecord record{0, 2, 50, "read incomplete", "short"};
-    auto diagnostic = dobby::buildDiagnostic(record, std::move(failure), "unit test");
+    dobby::ValidationEvidence validation;
+    validation.resultSuccess = false;
+    validation.response = 3;
+    validation.newOrUpdated = true;
+    validation.errorValue = 90;
+    validation.errorCategory = "minecraft.packet";
+    validation.errorMessage = "invalid MovePlayer position";
+    validation.sourceFrames = {{0xaabbccdd, "MovePlayerPacket.cpp", 417, "validate position Y"}};
+    validation.nestedErrors = {{1, 22, "minecraft.packet", "invalid coordinate", validation.sourceFrames}};
+    validation.nativeStackImageOffsets = {0x1234, 0x5678};
+    validation.recentPackets = {{18, 5, 12}, {19, 31, 0}};
+    auto diagnostic = dobby::buildDiagnostic(
+            record, std::move(failure), "unit test", validation);
     assert(diagnostic.report.find("Decode: ReadOnlyBinaryStream::read") != std::string::npos);
+    assert(diagnostic.report.find("Validation error: minecraft.packet:90") != std::string::npos);
+    assert(diagnostic.report.find("invalid MovePlayer position") != std::string::npos);
+    assert(diagnostic.report.find("MovePlayerPacket.cpp:417") != std::string::npos);
+    assert(diagnostic.report.find("validate position Y") != std::string::npos);
+    assert(diagnostic.report.find("libminecraftpe+0x1234") != std::string::npos);
+    assert(diagnostic.report.find("Recent inbound packets") != std::string::npos);
+    assert(diagnostic.report.find("Position.Y @4+4") != std::string::npos);
     assert(diagnostic.json.find("\"offset\":4") != std::string::npos);
+    assert(diagnostic.json.find("\"validation\":{") != std::string::npos);
+    assert(diagnostic.json.find("\"error_value\":90") != std::string::npos);
+    assert(diagnostic.json.find("\"source_frames\":[{") != std::string::npos);
+    assert(diagnostic.json.find("\"nested_errors\":[{") != std::string::npos);
+    assert(diagnostic.json.find("\"image_offset\":\"0x1234\"") != std::string::npos);
+    assert(diagnostic.json.find("\"packet_id\":19") != std::string::npos);
+    assert(diagnostic.json.find("\"packet_name\":\"MovePlayer\",\"packet_size\":31") != std::string::npos);
+    assert(diagnostic.json.find("\"raw_hex\":\"aa bb\"") != std::string::npos);
     assert(dobby::rawPacketHex(diagnostic) == "01 02 03 04 aa bb");
 
     dobby::clearStreamProbe();
@@ -190,8 +314,16 @@ void testClientSchemaFieldTrace() {
 
     dobby::clearStreamProbe();
     dobby::pushClientSchemaMember("item");
+    dobby::pushClientSchemaElement(7);
     dobby::pushClientSchemaMember("stackNetworkId");
+    std::string reusablePath;
+    reusablePath.reserve(128);
+    const auto* reservedStorage = reusablePath.data();
+    dobby::writeCurrentClientSchemaPath(reusablePath);
+    assert(reusablePath == "item[7].stackNetworkId");
+    require(reusablePath.data() == reservedStorage);
     dobby::captureStreamReadAttempt(stream.data(), 1, 2048);
+    dobby::popClientSchemaContext();
     dobby::popClientSchemaContext();
     dobby::popClientSchemaContext();
     store<std::size_t>(stream.data() + dobby::kStreamReadPointerOffset, 1);
@@ -199,11 +331,11 @@ void testClientSchemaFieldTrace() {
 
     auto failure = dobby::recentStreamFailure(std::chrono::seconds(1));
     assert(failure);
-    assert(failure->attempts.front().clientField == "item.stackNetworkId");
+    assert(failure->attempts.front().clientField == "item[7].stackNetworkId");
     assert(failure->attempts.back().clientField.empty());
     auto diagnostic = dobby::buildDiagnostic(
             {0, 2, 50, "read incomplete", "short"}, std::move(failure), "unit test");
-    assert(diagnostic.json.find("\"client_field\":\"item.stackNetworkId\"") != std::string::npos);
+    assert(diagnostic.json.find("\"client_field\":\"item[7].stackNetworkId\"") != std::string::npos);
 }
 
 void testProtocolDumpCompilation() {
@@ -1206,6 +1338,7 @@ void testDobbyWindowPolicy() {
 
 int main() {
     testViolationDecoder();
+    testUniversalValidationDecoder();
     testStreamProbeAndReport();
     testClientSchemaFieldTrace();
     testProtocolDumpCompilation();

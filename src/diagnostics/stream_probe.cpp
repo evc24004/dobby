@@ -53,6 +53,7 @@ void resetTrace(const void* stream, const StreamView& view, std::size_t rawCaptu
     activeTrace.rawBytesTruncated = activeTrace.rawSize < view.size;
     activeTrace.attemptCount = 0;
     activeTrace.nextAttempt = 0;
+    activeTrace.lastObservedAt = std::chrono::steady_clock::now();
 }
 
 StreamFailure snapshotTrace(bool overflowObserved) {
@@ -111,13 +112,15 @@ void captureStreamReadAttempt(const void* stream, std::size_t requested, std::si
 
     const std::size_t available = view->size - view->readPointer;
     const bool overflow = view->overflowed || requested > available;
-    activeTrace.attempts[activeTrace.nextAttempt] = StreamReadAttempt{
-            view->readPointer, requested, available, overflow, currentClientSchemaPath()};
+    auto& attempt = activeTrace.attempts[activeTrace.nextAttempt];
+    attempt.offset = view->readPointer;
+    attempt.requested = requested;
+    attempt.available = available;
+    attempt.overflow = overflow;
+    writeCurrentClientSchemaPath(attempt.clientField);
     activeTrace.nextAttempt = (activeTrace.nextAttempt + 1) % kMaximumTraceAttempts;
     activeTrace.attemptCount = std::min(activeTrace.attemptCount + 1, kMaximumTraceAttempts);
     activeTrace.previousOffset = view->readPointer;
-    activeTrace.lastObservedAt = std::chrono::steady_clock::now();
-
     if (!overflow)
         return;
 

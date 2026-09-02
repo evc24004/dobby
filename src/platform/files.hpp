@@ -20,6 +20,7 @@ void ensureOutputDirectory();
 const std::string& logPath();
 const std::string& eventPath();
 const std::string& latestPath();
+const std::string& latestAiPath();
 const std::string& clipboardPath();
 const std::string& preferencesPath();
 const std::string& protocolPath();

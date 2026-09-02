@@ -27,16 +27,32 @@ Every supported launch sweeps the client packet factory and passively traces eac
 
 Default values cannot prove empty collection element types or untaken conditional branches, so Dobby also embeds the exact PrismarineJS Bedrock `1.26.40` baseline from commit `8a80816cbfb3fe2b609f2cde4e57796c8033af61`. Startup verifies its size and hash before atomically writing the pinned baseline files `protocol.json` and `version.json`; the direct `1.26.45` runtime evidence remains separate in `protocol-observed.json`. `protocol-dump-status.json` records reference-only IDs, runtime-name divergences, serialization failures, field traces, source commit, and hashes. A failed target or reference check produces no claimed verified baseline.
 
-## In-game packet violation evidence
+## In-game packet validation evidence
 
-Dobby hooks `ClientNetworkHandler::handlePacketViolation` before Bedrock turns
-a terminating decode failure into the generic `ClientDisconnection-90` / `Block`
-screen. Some `BadPacket` paths bypass that callback, so Dobby also correlates the
-exact ID and declared size observed by `allowIncomingPacketId` with reason 90 in
-`onDisconnect`, then opens its diagnostic after Minecraft creates the generic
-screen. The popup retains the available Mojang context, decode boundary, client
-field path, and bounded raw bytes. The older warning-packet hook remains as a
-validated fallback.
+Dobby hooks the shared `Packet::read` return and
+`PacketSecurityController::checkForViolation` entry used by inbound packet
+deserialize, size, validation, and rate-limit failures. That captures the
+original `std::error_code`, Bedrock's source filename/line/context frames,
+nested causal errors, the last 32 inbound packets, an image-relative native
+stack, client schema field reads, and bounded raw bytes before the result is
+reduced to a generic disconnect.
+
+The downstream `ClientNetworkHandler::handlePacketViolation` entry,
+`PacketViolationWarningPacket`, and correlated `allowIncomingPacketId` plus
+`onDisconnect` hooks remain as independent fallbacks. The direct handler also
+captures its own `std::error_code` when no upstream result was observed. For
+terminating errors, Dobby opens its diagnostic after Minecraft creates the generic
+`ClientDisconnection-90` / `Block` screen so its popup stays visible.
+
+The latest paste-ready report is `latest-dobby-violation.txt`; the complete
+machine-readable snapshot for AI analysis is `latest-dobby-ai.json`, and the
+append-only history is `dobby-events.jsonl`. These files live in the configured
+Dobby output directory and are never committed.
+
+The always-on capture path is allocation-free after its bounded schema buffers
+warm up, timestamps packet boundaries instead of individual field reads, and
+skips guarded error-object inspection for successful packets. Visual metric and
+traffic overlays can remain disabled without disabling packet diagnostics.
 
 ![Packet rejection diagnostic window](media/image.png)
 
@@ -44,7 +60,7 @@ validated fallback.
 
 ## Target
 
-- Dobby `2.12.2`
+- Dobby `2.13.0`
 - Minecraft Android `1.26.45.1` (the `26.45` hotfix)
 - `arm64-v8a`
 - network protocol `2169`
@@ -54,7 +70,7 @@ The mod validates the target signature and refuses to patch incompatible builds.
 
 On macOS, Minecraft `1.26.45.1` currently needs the launcher compatibility
 module from `mcpelauncher-updates/1.26.45.1/arm64-v8a` loaded alongside Dobby.
-The verified runtime combination reaches `READY: Dobby 2.12.2 developer
+The verified runtime combination reaches `READY: Dobby 2.13.0 developer
 diagnostics active` and initializes the protocol, packet, metrics, chunk, ESP,
 and developer UI hooks.
 

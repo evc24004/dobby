@@ -10,6 +10,7 @@ void pushClientSchemaMember(std::string_view name);
 void pushClientSchemaElement(std::uint64_t index);
 void popClientSchemaContext();
 std::string currentClientSchemaPath();
+void writeCurrentClientSchemaPath(std::string& destination);
 void clearClientSchemaTrace();
 
 } // namespace dobby

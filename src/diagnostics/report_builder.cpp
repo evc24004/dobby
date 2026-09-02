@@ -8,7 +8,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <iomanip>
+#include <limits>
 #include <span>
 #include <sstream>
 
@@ -83,6 +87,177 @@ std::string buildHexDump(const StreamFailure& failure) {
     return output.str();
 }
 
+template <class T>
+T readLittleEndian(std::span<const std::uint8_t> bytes) {
+    T value{};
+    std::memcpy(&value, bytes.data(), sizeof(value));
+    return value;
+}
+
+std::string floatingPointText(double value) {
+    if (std::isnan(value))
+        return "nan";
+    if (std::isinf(value))
+        return value < 0 ? "-inf" : "inf";
+    std::ostringstream output;
+    output << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+    return output.str();
+}
+
+std::span<const std::uint8_t> attemptBytes(
+        const StreamFailure& failure, const StreamReadAttempt& attempt) {
+    if (attempt.offset >= failure.rawBytes.size())
+        return {};
+    const auto size = std::min(attempt.requested, failure.rawBytes.size() - attempt.offset);
+    return {failure.rawBytes.data() + attempt.offset, size};
+}
+
+std::string primitiveInterpretationsJson(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() == 1) {
+        const auto value = bytes[0];
+        return std::string("{\"u8\":") + std::to_string(value) +
+               ",\"i8\":" + std::to_string(static_cast<std::int8_t>(value)) +
+               ",\"bool_candidate\":" + (value == 0 ? "false" : "true") + "}";
+    }
+    if (bytes.size() == 2) {
+        return std::string("{\"u16_le\":") +
+               std::to_string(readLittleEndian<std::uint16_t>(bytes)) +
+               ",\"i16_le\":" +
+               std::to_string(readLittleEndian<std::int16_t>(bytes)) + "}";
+    }
+    if (bytes.size() == 4) {
+        return std::string("{\"u32_le\":") +
+               std::to_string(readLittleEndian<std::uint32_t>(bytes)) +
+               ",\"i32_le\":" +
+               std::to_string(readLittleEndian<std::int32_t>(bytes)) +
+               ",\"f32_le\":\"" +
+               floatingPointText(readLittleEndian<float>(bytes)) + "\"}";
+    }
+    if (bytes.size() == 8) {
+        return std::string("{\"u64_le\":\"") +
+               std::to_string(readLittleEndian<std::uint64_t>(bytes)) +
+               "\",\"i64_le\":\"" +
+               std::to_string(readLittleEndian<std::int64_t>(bytes)) +
+               "\",\"f64_le\":\"" +
+               floatingPointText(readLittleEndian<double>(bytes)) + "\"}";
+    }
+    return "null";
+}
+
+std::string primitiveInterpretationsText(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() == 1) {
+        const auto value = bytes[0];
+        return "u8=" + std::to_string(value) +
+               " i8=" + std::to_string(static_cast<std::int8_t>(value)) +
+               " bool=" + (value == 0 ? "false" : "true");
+    }
+    if (bytes.size() == 2) {
+        return "u16le=" + std::to_string(readLittleEndian<std::uint16_t>(bytes)) +
+               " i16le=" + std::to_string(readLittleEndian<std::int16_t>(bytes));
+    }
+    if (bytes.size() == 4) {
+        return "u32le=" + std::to_string(readLittleEndian<std::uint32_t>(bytes)) +
+               " i32le=" + std::to_string(readLittleEndian<std::int32_t>(bytes)) +
+               " f32le=" + floatingPointText(readLittleEndian<float>(bytes));
+    }
+    if (bytes.size() == 8) {
+        return "u64le=" + std::to_string(readLittleEndian<std::uint64_t>(bytes)) +
+               " i64le=" + std::to_string(readLittleEndian<std::int64_t>(bytes)) +
+               " f64le=" + floatingPointText(readLittleEndian<double>(bytes));
+    }
+    return {};
+}
+
+std::string buildFieldEvidence(const StreamFailure& failure) {
+    std::ostringstream output;
+    bool wroteHeader = false;
+    for (const auto& attempt : failure.attempts) {
+        if (attempt.clientField.empty())
+            continue;
+        if (!wroteHeader) {
+            output << "Field evidence (raw bytes; little-endian candidates, types not inferred):\n";
+            wroteHeader = true;
+        }
+        const auto bytes = attemptBytes(failure, attempt);
+        output << "- " << attempt.clientField << " @" << attempt.offset << "+"
+               << attempt.requested << " raw " << hexBytes(bytes);
+        if (bytes.size() != attempt.requested)
+            output << " [captured " << bytes.size() << "/" << attempt.requested << "]";
+        const auto candidates = primitiveInterpretationsText(bytes);
+        if (!candidates.empty())
+            output << " | " << candidates;
+        if (attempt.overflow)
+            output << " | overflow";
+        output << '\n';
+    }
+    return output.str();
+}
+
+std::string imageOffsetHex(std::uint64_t offset) {
+    std::ostringstream output;
+    output << "0x" << std::hex << offset;
+    return output.str();
+}
+
+std::string buildValidationReport(const ValidationEvidence& evidence) {
+    std::ostringstream output;
+    output << "Validation result: " << (evidence.resultSuccess ? "success" : "failure")
+           << " | response " << evidence.response
+           << " | new_or_updated " << (evidence.newOrUpdated ? "yes" : "no") << '\n';
+    output << "Validation error: "
+           << (evidence.errorCategory.empty() ? "unknown" : evidence.errorCategory)
+           << ':' << evidence.errorValue;
+    if (!evidence.errorMessage.empty())
+        output << " | " << evidence.errorMessage;
+    output << '\n';
+    if (!evidence.sourceFrames.empty()) {
+        output << "Bedrock error provenance (inner -> outer):\n";
+        for (const auto& frame : evidence.sourceFrames) {
+            output << "- " << (frame.filename.empty() ? "<filename unavailable>" : frame.filename)
+                   << ':' << frame.line << " | hash " << imageOffsetHex(frame.filenameHash);
+            if (!frame.context.empty())
+                output << " | " << frame.context;
+            output << '\n';
+        }
+    }
+    if (!evidence.nestedErrors.empty()) {
+        output << "Nested validation errors:\n";
+        for (const auto& nested : evidence.nestedErrors) {
+            output << "- depth " << nested.depth << " | "
+                   << (nested.errorCategory.empty() ? "unknown" : nested.errorCategory)
+                   << ':' << nested.errorValue;
+            if (!nested.errorMessage.empty())
+                output << " | " << nested.errorMessage;
+            output << '\n';
+            for (const auto& frame : nested.sourceFrames) {
+                output << "  - "
+                       << (frame.filename.empty() ? "<filename unavailable>" : frame.filename)
+                       << ':' << frame.line;
+                if (!frame.context.empty())
+                    output << " | " << frame.context;
+                output << '\n';
+            }
+        }
+    }
+    if (evidence.provenanceTruncated)
+        output << "Bedrock error provenance: truncated or unreadable\n";
+    if (!evidence.nativeStackImageOffsets.empty()) {
+        output << "Native stack (libminecraftpe image offsets):\n";
+        for (const auto offset : evidence.nativeStackImageOffsets)
+            output << "- libminecraftpe+" << imageOffsetHex(offset) << '\n';
+    }
+    if (!evidence.recentPackets.empty()) {
+        output << "Recent inbound packets (oldest -> newest):\n";
+        for (const auto& packet : evidence.recentPackets) {
+            output << "- " << packetNameString(packet.packetId) << " (" << packet.packetId
+                   << ") size " << packet.packetSize << " age "
+                   << packet.ageMilliseconds << "ms\n";
+        }
+    }
+    output << '\n';
+    return output.str();
+}
+
 std::string buildJson(const Diagnostic& diagnostic) {
     std::string json =
             std::string("{\"tool\":\"dobby\",\"tool_version\":\"") + kDobbyVersion +
@@ -99,6 +274,73 @@ std::string buildJson(const Diagnostic& diagnostic) {
             "\",\"packet_name\":\"" + jsonEscape(packetNameString(diagnostic.packetId)) +
             "\",\"context\":\"" + jsonEscape(diagnostic.context) +
             "\",\"context_storage\":\"" + diagnostic.contextStorage + "\"";
+
+    if (diagnostic.validation) {
+        const auto& evidence = *diagnostic.validation;
+        json += std::string(",\"validation\":{\"result_success\":") +
+                (evidence.resultSuccess ? "true" : "false") +
+                ",\"response\":" + std::to_string(evidence.response) +
+                ",\"new_or_updated\":" + (evidence.newOrUpdated ? "true" : "false") +
+                ",\"error_value\":" + std::to_string(evidence.errorValue) +
+                ",\"error_category\":\"" + jsonEscape(evidence.errorCategory) +
+                "\",\"error_message\":\"" + jsonEscape(evidence.errorMessage) +
+                "\",\"provenance_truncated\":" +
+                (evidence.provenanceTruncated ? "true" : "false") +
+                ",\"source_frames\":[";
+        for (std::size_t index = 0; index < evidence.sourceFrames.size(); ++index) {
+            if (index != 0)
+                json += ',';
+            const auto& frame = evidence.sourceFrames[index];
+            json += std::string("{\"filename_hash\":\"") +
+                    imageOffsetHex(frame.filenameHash) +
+                    "\",\"filename\":\"" + jsonEscape(frame.filename) +
+                    "\",\"line\":" + std::to_string(frame.line) +
+                    ",\"context\":\"" + jsonEscape(frame.context) + "\"}";
+        }
+        json += "],\"nested_errors\":[";
+        for (std::size_t index = 0; index < evidence.nestedErrors.size(); ++index) {
+            if (index != 0)
+                json += ',';
+            const auto& nested = evidence.nestedErrors[index];
+            json += std::string("{\"depth\":") + std::to_string(nested.depth) +
+                    ",\"error_value\":" + std::to_string(nested.errorValue) +
+                    ",\"error_category\":\"" + jsonEscape(nested.errorCategory) +
+                    "\",\"error_message\":\"" + jsonEscape(nested.errorMessage) +
+                    "\",\"source_frames\":[";
+            for (std::size_t frameIndex = 0;
+                 frameIndex < nested.sourceFrames.size(); ++frameIndex) {
+                if (frameIndex != 0)
+                    json += ',';
+                const auto& frame = nested.sourceFrames[frameIndex];
+                json += std::string("{\"filename_hash\":\"") +
+                        imageOffsetHex(frame.filenameHash) +
+                        "\",\"filename\":\"" + jsonEscape(frame.filename) +
+                        "\",\"line\":" + std::to_string(frame.line) +
+                        ",\"context\":\"" + jsonEscape(frame.context) + "\"}";
+            }
+            json += "]}";
+        }
+        json += "],\"native_stack\":[";
+        for (std::size_t index = 0; index < evidence.nativeStackImageOffsets.size(); ++index) {
+            if (index != 0)
+                json += ',';
+            json += "{\"image_offset\":\"" +
+                    imageOffsetHex(evidence.nativeStackImageOffsets[index]) + "\"}";
+        }
+        json += "],\"recent_packets\":[";
+        for (std::size_t index = 0; index < evidence.recentPackets.size(); ++index) {
+            if (index != 0)
+                json += ',';
+            const auto& packet = evidence.recentPackets[index];
+            json += std::string("{\"packet_id\":") + std::to_string(packet.packetId) +
+                    ",\"packet_name\":\"" + jsonEscape(packetNameString(packet.packetId)) +
+                    "\",\"packet_size\":" + std::to_string(packet.packetSize) +
+                    ",\"age_ms\":" + std::to_string(packet.ageMilliseconds) + "}";
+        }
+        json += "]}";
+    } else {
+        json += ",\"validation\":null";
+    }
 
     if (diagnostic.streamFailure) {
         const auto& failure = *diagnostic.streamFailure;
@@ -133,6 +375,10 @@ std::string buildJson(const Diagnostic& diagnostic) {
                     ",\"overflow\":" + (attempt.overflow ? "true" : "false");
             if (!attempt.clientField.empty())
                 json += ",\"client_field\":\"" + jsonEscape(attempt.clientField) + "\"";
+            const auto bytes = attemptBytes(failure, attempt);
+            json += ",\"raw_hex\":\"" + jsonEscape(hexBytes(bytes)) +
+                    "\",\"candidate_interpretations\":" +
+                    primitiveInterpretationsJson(bytes);
             json += "}";
         }
         json += "]}";
@@ -156,6 +402,9 @@ std::string buildReport(const Diagnostic& diagnostic) {
             violationTypeName(diagnostic.type) + " / " + severityName(diagnostic.severity) +
             "\n" + diagnostic.context + "\n\n";
 
+    if (diagnostic.validation)
+        report += buildValidationReport(*diagnostic.validation);
+
     if (diagnostic.streamFailure) {
         const auto& failure = *diagnostic.streamFailure;
         if (failure.packetEndMismatch) {
@@ -166,6 +415,7 @@ std::string buildReport(const Diagnostic& diagnostic) {
                     std::to_string(failure.available) + " | overflow no\n" +
                     buildClientFieldLine(failure) +
                     buildReadTrace(failure) +
+                    buildFieldEvidence(failure) +
                     "Raw ('>' marks cursor):\n" +
                     buildHexDump(failure) + "\n";
         } else if (failure.overflowObserved) {
@@ -176,6 +426,8 @@ std::string buildReport(const Diagnostic& diagnostic) {
                     std::to_string(failure.requested) + " | remaining " +
                     std::to_string(failure.available) + " | overflow yes\n" +
                     buildClientFieldLine(failure) +
+                    buildReadTrace(failure) +
+                    buildFieldEvidence(failure) +
                     "Raw ('>' marks cursor):\n" + buildHexDump(failure) + "\n";
         } else {
             report +=
@@ -185,6 +437,7 @@ std::string buildReport(const Diagnostic& diagnostic) {
                     std::to_string(failure.available) + " | overflow no\n" +
                     buildClientFieldLine(failure) +
                     buildReadTrace(failure) +
+                    buildFieldEvidence(failure) +
                     "Raw ('>' marks cursor):\n" + buildHexDump(failure) + "\n";
         }
     } else {
@@ -226,7 +479,7 @@ std::string packetIdHex(std::int32_t packetId) {
 
 Diagnostic buildDiagnostic(
         const ViolationRecord& record, std::optional<StreamFailure> streamFailure,
-        std::string intercept) {
+        std::string intercept, std::optional<ValidationEvidence> validation) {
     Diagnostic result;
     result.capturedAt = timestamp();
     result.type = record.type;
@@ -236,6 +489,7 @@ Diagnostic buildDiagnostic(
     result.contextStorage = record.contextStorage;
     result.intercept = std::move(intercept);
     result.streamFailure = std::move(streamFailure);
+    result.validation = std::move(validation);
     result.json = buildJson(result);
     result.report = buildReport(result);
     return result;
@@ -257,7 +511,8 @@ std::string buildDeveloperStatus(const RuntimeSnapshot& snapshot) {
             "\nHistory limit: " + std::to_string(config().historyLimit) +
             "\nRaw capture limit: " + std::to_string(config().rawCaptureLimit) + " bytes\n"
             "Log: " + logPath() + "\n"
-            "JSONL: " + eventPath() + "\n";
+            "JSONL: " + eventPath() + "\n"
+            "AI snapshot: " + latestAiPath() + "\n";
 }
 
 std::string rawPacketHex(const Diagnostic& diagnostic) {

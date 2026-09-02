@@ -1,7 +1,9 @@
 #include "diagnostics/client_schema_trace.hpp"
 
 #include <array>
+#include <charconv>
 #include <cstddef>
+#include <system_error>
 
 namespace dobby {
 namespace {
@@ -17,20 +19,27 @@ struct ClientSchemaContext {
 
 thread_local ClientSchemaContext context;
 
-void pushComponent(std::string component) {
-    if (context.depth >= context.components.size())
-        return;
-    context.components[context.depth++] = std::move(component);
-}
-
 } // namespace
 
 void pushClientSchemaMember(std::string_view name) {
-    pushComponent(std::string(name.substr(0, kMaximumMemberLength)));
+    if (context.depth >= context.components.size())
+        return;
+    context.components[context.depth++].assign(
+            name.substr(0, kMaximumMemberLength));
 }
 
 void pushClientSchemaElement(std::uint64_t index) {
-    pushComponent("[" + std::to_string(index) + "]");
+    if (context.depth >= context.components.size())
+        return;
+    auto& component = context.components[context.depth++];
+    component.clear();
+    component.push_back('[');
+    std::array<char, 24> digits{};
+    const auto converted = std::to_chars(
+            digits.data(), digits.data() + digits.size(), index);
+    if (converted.ec == std::errc{})
+        component.append(digits.data(), converted.ptr);
+    component.push_back(']');
 }
 
 void popClientSchemaContext() {
@@ -41,17 +50,22 @@ void popClientSchemaContext() {
 
 std::string currentClientSchemaPath() {
     std::string result;
+    writeCurrentClientSchemaPath(result);
+    return result;
+}
+
+void writeCurrentClientSchemaPath(std::string& destination) {
+    destination.clear();
     for (std::size_t index = 0; index < context.depth; ++index) {
         const auto& component = context.components[index];
         if (component.empty())
             continue;
-        if (!result.empty() && component.front() != '[')
-            result += '.';
-        if (result.size() + component.size() > kMaximumPathLength)
+        if (!destination.empty() && component.front() != '[')
+            destination += '.';
+        if (destination.size() + component.size() > kMaximumPathLength)
             break;
-        result += component;
+        destination += component;
     }
-    return result;
 }
 
 void clearClientSchemaTrace() {
