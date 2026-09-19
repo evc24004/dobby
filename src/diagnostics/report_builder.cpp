@@ -3,6 +3,7 @@
 #include "core/config.hpp"
 #include "core/constants.hpp"
 #include "diagnostics/violation_decoder.hpp"
+#include "diagnostics/resource_pack_response.hpp"
 #include "network/packet_names.hpp"
 #include "platform/files.hpp"
 
@@ -301,7 +302,68 @@ std::string buildDisconnectJson(const Diagnostic& diagnostic) {
                 "\",\"packet_size\":" + std::to_string(packet.packetSize) +
                 ",\"age_ms\":" + std::to_string(packet.ageMilliseconds) + "}";
     }
-    json += std::string("],\"minecraft_version\":\"") + kMinecraftVersion +
+    json += "],\"recent_outbound_packets\":[";
+    for (std::size_t index = 0;
+         index < evidence.recentOutboundPackets.size(); ++index) {
+        if (index != 0)
+            json += ',';
+        const auto& packet = evidence.recentOutboundPackets[index];
+        json += std::string("{\"packet_id\":") +
+                std::to_string(packet.packetId) +
+                ",\"packet_name\":\"" +
+                jsonEscape(packetNameString(packet.packetId)) +
+                "\",\"age_ms\":" +
+                std::to_string(packet.ageMilliseconds) +
+                ",\"resource_pack_response\":";
+        if (packet.resourcePackResponse) {
+            const auto& response = *packet.resourcePackResponse;
+            json += std::string("{\"status\":") +
+                    std::to_string(response.status) +
+                    ",\"status_name_observed\":\"" +
+                    jsonEscape(response.serializedStatusName) +
+                    "\",\"status_name_mapped\":\"" +
+                    resourcePackResponseStatusName(response.status) +
+                    "\",\"decode_complete\":" +
+                    (response.decodeComplete ? "true" : "false") +
+                    ",\"decode_error\":\"" +
+                    jsonEscape(response.decodeError) +
+                    "\",\"raw_truncated\":" +
+                    (response.rawBytesTruncated ? "true" : "false") +
+                    ",\"raw_hex\":\"" +
+                    jsonEscape(hexBytes(response.rawBytes)) +
+                    "\",\"resource_pack_ids\":[";
+            for (std::size_t idIndex = 0;
+                 idIndex < response.resourcePackIds.size(); ++idIndex) {
+                if (idIndex != 0)
+                    json += ',';
+                json += "\"" +
+                        jsonEscape(response.resourcePackIds[idIndex]) + "\"";
+            }
+            json += "]}";
+        } else {
+            json += "null";
+        }
+        json += "}";
+    }
+    json += "],\"transport\":";
+    if (evidence.transport) {
+        const auto& transport = *evidence.transport;
+        json += std::string("{\"message_id\":") +
+                std::to_string(transport.messageId) +
+                ",\"message_name\":\"" +
+                jsonEscape(transport.messageName) +
+                "\",\"packet_length\":" +
+                std::to_string(transport.packetLength) +
+                ",\"age_ms\":" +
+                std::to_string(transport.ageMilliseconds) +
+                ",\"raw_truncated\":" +
+                (transport.rawBytesTruncated ? "true" : "false") +
+                ",\"raw_hex\":\"" +
+                jsonEscape(hexBytes(transport.rawBytes)) + "\"}";
+    } else {
+        json += "null";
+    }
+    json += std::string(",\"minecraft_version\":\"") + kMinecraftVersion +
             "\",\"libminecraftpe_build_id\":\"" + kMinecraftBuildId + "\"}";
     return json;
 }
@@ -322,6 +384,26 @@ std::string buildDisconnectReport(const Diagnostic& diagnostic) {
         output << "Message from server: " << evidence.messageFromServer << '\n';
     if (!evidence.messageBodyOverride.empty())
         output << "Message body override: " << evidence.messageBodyOverride << '\n';
+    if (evidence.transport) {
+        const auto& transport = *evidence.transport;
+        output << "\nTransport event: " << transport.messageName << " ("
+               << transport.messageId << ") packet_length="
+               << transport.packetLength << " age "
+               << transport.ageMilliseconds << "ms\n"
+               << "Transport raw: " << hexBytes(transport.rawBytes);
+        if (transport.rawBytesTruncated)
+            output << " [truncated]";
+        output << '\n';
+        if (transport.messageId == 21) {
+            output << "Interpretation: RakNet delivered a graceful remote "
+                      "disconnection notification.\n";
+        } else if (transport.messageId == 22) {
+            output << "Interpretation: RakNet declared the connection lost "
+                      "without a Minecraft Disconnect packet.\n";
+        }
+    } else {
+        output << "\nTransport event: unavailable\n";
+    }
     if (!evidence.recentPackets.empty()) {
         output << "\nRecent inbound packets (oldest -> newest):\n";
         for (const auto& packet : evidence.recentPackets) {
@@ -332,6 +414,38 @@ std::string buildDisconnectReport(const Diagnostic& diagnostic) {
         }
     } else {
         output << "\nRecent inbound packets: unavailable\n";
+    }
+    if (!evidence.recentOutboundPackets.empty()) {
+        output << "\nRecent outbound packets (oldest -> newest):\n";
+        for (const auto& packet : evidence.recentOutboundPackets) {
+            output << "- " << packetNameString(packet.packetId) << " ("
+                   << packet.packetId << " / " << packetIdHex(packet.packetId)
+                   << ") age " << packet.ageMilliseconds << "ms\n";
+            if (packet.resourcePackResponse) {
+                const auto& response = *packet.resourcePackResponse;
+                output << "  Response status: " << response.status
+                       << " | serialized name: "
+                       << (response.serializedStatusName.empty()
+                                   ? "<unavailable>"
+                                   : response.serializedStatusName)
+                       << '\n'
+                       << "  Status mapping: "
+                       << resourcePackResponseStatusName(response.status) << '\n'
+                       << "  Serialized raw: " << hexBytes(response.rawBytes);
+                if (response.rawBytesTruncated)
+                    output << " [truncated]";
+                output << '\n';
+                if (!response.resourcePackIds.empty()) {
+                    output << "  Requested resource-pack IDs:\n";
+                    for (const auto& id : response.resourcePackIds)
+                        output << "  - " << id << '\n';
+                }
+                if (!response.decodeComplete)
+                    output << "  Decode incomplete: " << response.decodeError << '\n';
+            }
+        }
+    } else {
+        output << "\nRecent outbound packets: unavailable\n";
     }
     if (!evidence.nativeStackImageOffsets.empty()) {
         output << "\nNative stack (libminecraftpe image offsets):\n";
@@ -513,7 +627,68 @@ std::string buildJson(const Diagnostic& diagnostic) {
                     ",\"age_ms\":" +
                     std::to_string(packet.ageMilliseconds) + "}";
         }
-        json += "]}";
+        json += "],\"recent_outbound_packets\":[";
+        for (std::size_t index = 0;
+             index < evidence.recentOutboundPackets.size(); ++index) {
+            if (index != 0)
+                json += ',';
+            const auto& packet = evidence.recentOutboundPackets[index];
+            json += std::string("{\"packet_id\":") +
+                    std::to_string(packet.packetId) +
+                    ",\"packet_name\":\"" +
+                    jsonEscape(packetNameString(packet.packetId)) +
+                    "\",\"age_ms\":" +
+                    std::to_string(packet.ageMilliseconds) +
+                    ",\"resource_pack_response\":";
+            if (packet.resourcePackResponse) {
+                const auto& response = *packet.resourcePackResponse;
+                json += std::string("{\"status\":") +
+                        std::to_string(response.status) +
+                        ",\"status_name_observed\":\"" +
+                        jsonEscape(response.serializedStatusName) +
+                        "\",\"status_name_mapped\":\"" +
+                        resourcePackResponseStatusName(response.status) +
+                        "\",\"decode_complete\":" +
+                        (response.decodeComplete ? "true" : "false") +
+                        ",\"decode_error\":\"" +
+                        jsonEscape(response.decodeError) +
+                        "\",\"raw_truncated\":" +
+                        (response.rawBytesTruncated ? "true" : "false") +
+                        ",\"raw_hex\":\"" +
+                        jsonEscape(hexBytes(response.rawBytes)) +
+                        "\",\"resource_pack_ids\":[";
+                for (std::size_t idIndex = 0;
+                     idIndex < response.resourcePackIds.size(); ++idIndex) {
+                    if (idIndex != 0)
+                        json += ',';
+                    json += "\"" +
+                            jsonEscape(response.resourcePackIds[idIndex]) + "\"";
+                }
+                json += "]}";
+            } else {
+                json += "null";
+            }
+            json += "}";
+        }
+        json += "],\"transport\":";
+        if (evidence.transport) {
+            const auto& transport = *evidence.transport;
+            json += std::string("{\"message_id\":") +
+                    std::to_string(transport.messageId) +
+                    ",\"message_name\":\"" +
+                    jsonEscape(transport.messageName) +
+                    "\",\"packet_length\":" +
+                    std::to_string(transport.packetLength) +
+                    ",\"age_ms\":" +
+                    std::to_string(transport.ageMilliseconds) +
+                    ",\"raw_truncated\":" +
+                    (transport.rawBytesTruncated ? "true" : "false") +
+                    ",\"raw_hex\":\"" +
+                    jsonEscape(hexBytes(transport.rawBytes)) + "\"}";
+        } else {
+            json += "null";
+        }
+        json += "}";
     } else {
         json += ",\"disconnect\":null";
     }
@@ -550,6 +725,36 @@ std::string buildReport(const Diagnostic& diagnostic) {
         if (!evidence.messageBodyOverride.empty())
             report += "Message body override: " +
                     evidence.messageBodyOverride + "\n";
+        if (evidence.transport) {
+            const auto& transport = *evidence.transport;
+            report += "Transport event: " + transport.messageName + " (" +
+                    std::to_string(transport.messageId) + ") packet_length=" +
+                    std::to_string(transport.packetLength) + " age " +
+                    std::to_string(transport.ageMilliseconds) + "ms\n";
+        }
+        if (!evidence.recentOutboundPackets.empty()) {
+            report += "Recent outbound packets:\n";
+            for (const auto& packet : evidence.recentOutboundPackets) {
+                report += "- " + packetNameString(packet.packetId) + " (" +
+                        std::to_string(packet.packetId) + ") age " +
+                        std::to_string(packet.ageMilliseconds) + "ms\n";
+                if (packet.resourcePackResponse) {
+                    const auto& response = *packet.resourcePackResponse;
+                    report += "  Response status: " +
+                            std::to_string(response.status) +
+                            " | serialized name: " +
+                            (response.serializedStatusName.empty()
+                                     ? std::string("<unavailable>")
+                                     : response.serializedStatusName) +
+                            "\n  Status mapping: " +
+                            resourcePackResponseStatusName(response.status) +
+                            "\n";
+                    if (!response.decodeComplete)
+                        report += "  Decode incomplete: " +
+                                response.decodeError + "\n";
+                }
+            }
+        }
         report += "\n";
     }
 

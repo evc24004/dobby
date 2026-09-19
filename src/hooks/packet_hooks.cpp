@@ -6,10 +6,12 @@
 #include "diagnostics/client_schema_trace.hpp"
 #include "diagnostics/disconnect_decoder.hpp"
 #include "diagnostics/report_builder.hpp"
+#include "diagnostics/resource_pack_response.hpp"
 #include "diagnostics/stream_probe.hpp"
 #include "diagnostics/validation_decoder.hpp"
 #include "diagnostics/violation_decoder.hpp"
 #include "hooks/minecraft_image.hpp"
+#include "hooks/outbound_packet_hook.hpp"
 #include "platform/files.hpp"
 #include "platform/launcher.hpp"
 #include "platform/log.hpp"
@@ -20,9 +22,12 @@
 #include <chrono>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -37,6 +42,69 @@ extern "C" void* dobby_packet_end_continue = nullptr;
 extern "C" void* dobby_packet_security_continue = nullptr;
 extern "C" void* dobby_packet_read_continue = nullptr;
 extern "C" void* dobby_handle_violation_continue = nullptr;
+extern "C" void* dobby_raknet_message_low_continue = nullptr;
+extern "C" void* dobby_raknet_message_high_continue = nullptr;
+extern "C" void* dobby_raknet_message_greater_continue = nullptr;
+
+extern "C" void dobby_capture_raknet_message(
+        std::uint32_t messageId, const void* packet);
+
+extern "C" [[gnu::naked]] void dobby_raknet_message_detour() {
+    asm volatile(
+            // The RakNet packet pump keeps its Packet* in x21 and data[0] in
+            // w20. Preserve every caller-saved GPR/SIMD register around the
+            // passive capture because the surrounding function is still live.
+            "sub sp, sp, #288\n"
+            "stp x0, x1, [sp, #0]\n"
+            "stp x2, x3, [sp, #16]\n"
+            "stp x4, x5, [sp, #32]\n"
+            "stp x6, x7, [sp, #48]\n"
+            "stp x8, x9, [sp, #64]\n"
+            "stp x10, x11, [sp, #80]\n"
+            "stp x12, x13, [sp, #96]\n"
+            "stp x14, x15, [sp, #112]\n"
+            "stp x16, x17, [sp, #128]\n"
+            "stp x18, x30, [sp, #144]\n"
+            "stp q0, q1, [sp, #160]\n"
+            "stp q2, q3, [sp, #192]\n"
+            "stp q4, q5, [sp, #224]\n"
+            "stp q6, q7, [sp, #256]\n"
+            "mov w0, w20\n"
+            "mov x1, x21\n"
+            "bl dobby_capture_raknet_message\n"
+            "ldp q6, q7, [sp, #256]\n"
+            "ldp q4, q5, [sp, #224]\n"
+            "ldp q2, q3, [sp, #192]\n"
+            "ldp q0, q1, [sp, #160]\n"
+            "ldp x18, x30, [sp, #144]\n"
+            "ldp x16, x17, [sp, #128]\n"
+            "ldp x14, x15, [sp, #112]\n"
+            "ldp x12, x13, [sp, #96]\n"
+            "ldp x10, x11, [sp, #80]\n"
+            "ldp x8, x9, [sp, #64]\n"
+            "ldp x6, x7, [sp, #48]\n"
+            "ldp x4, x5, [sp, #32]\n"
+            "ldp x2, x3, [sp, #16]\n"
+            "ldp x0, x1, [sp, #0]\n"
+            "add sp, sp, #288\n"
+            // Reproduce the two comparisons and branches replaced by the
+            // absolute entry patch, then resume at the original destination.
+            "cmp w20, #0x8d\n"
+            "b.hi 1f\n"
+            "cmp w20, #0x14\n"
+            "b.gt 2f\n"
+            "adrp x16, dobby_raknet_message_low_continue\n"
+            "ldr x16, [x16, :lo12:dobby_raknet_message_low_continue]\n"
+            "br x16\n"
+            "1:\n"
+            "adrp x16, dobby_raknet_message_high_continue\n"
+            "ldr x16, [x16, :lo12:dobby_raknet_message_high_continue]\n"
+            "br x16\n"
+            "2:\n"
+            "adrp x16, dobby_raknet_message_greater_continue\n"
+            "ldr x16, [x16, :lo12:dobby_raknet_message_greater_continue]\n"
+            "br x16\n");
+}
 
 extern "C" void dobby_capture_read_attempt(const void* stream, std::uint64_t requested) {
     dobby::captureStreamReadAttempt(stream, static_cast<std::size_t>(requested),
@@ -216,6 +284,150 @@ thread_local std::array<InboundPacketObservation, packetHistoryCapacity> inbound
 thread_local std::size_t inboundPacketHistoryNext = 0;
 thread_local std::size_t inboundPacketHistoryCount = 0;
 
+struct OutboundPacketObservation {
+    std::int32_t packetId{-1};
+    std::chrono::steady_clock::time_point observedAt{};
+    std::optional<ResourcePackClientResponseEvidence> resourcePackResponse;
+    bool valid{false};
+};
+
+std::mutex outboundPacketHistoryMutex;
+std::array<OutboundPacketObservation, packetHistoryCapacity> outboundPacketHistory;
+std::size_t outboundPacketHistoryNext = 0;
+std::size_t outboundPacketHistoryCount = 0;
+
+ResourcePackClientResponseEvidence resourcePackCaptureError(
+        std::string message) {
+    ResourcePackClientResponseEvidence result;
+    result.decodeError = std::move(message);
+    return result;
+}
+
+bool binaryStreamBytes(
+        const void* stream, std::vector<std::uint8_t>& bytes,
+        bool& truncated) {
+    constexpr std::size_t androidStringOffset = 0x8;
+    constexpr std::size_t androidStringSize = 24;
+    constexpr std::size_t maximumSerializedCapture = 4096;
+    constexpr std::size_t maximumPlausibleSize = 1024 * 1024;
+    std::array<std::byte, androidStringSize> header{};
+    if (!copyReadableMemory(
+                static_cast<const std::byte*>(stream) + androidStringOffset,
+                header)) {
+        return false;
+    }
+
+    const auto tag = std::to_integer<std::uint8_t>(header[0]);
+    std::size_t size = 0;
+    const std::uint8_t* data = nullptr;
+    if ((tag & 1U) == 0) {
+        size = tag >> 1U;
+        if (size > androidStringSize - 2)
+            return false;
+        data = reinterpret_cast<const std::uint8_t*>(header.data() + 1);
+    } else {
+        std::memcpy(&size, header.data() + 8, sizeof(size));
+        std::memcpy(&data, header.data() + 16, sizeof(data));
+        if (data == nullptr)
+            return size == 0;
+    }
+    if (size > maximumPlausibleSize)
+        return false;
+
+    const auto captureSize = std::min(size, maximumSerializedCapture);
+    bytes.resize(captureSize);
+    if ((tag & 1U) == 0) {
+        std::memcpy(bytes.data(), data, captureSize);
+    } else if (captureSize != 0 && !copyReadableMemory(
+                       data,
+                       std::span<std::byte>(
+                               reinterpret_cast<std::byte*>(bytes.data()),
+                               bytes.size()))) {
+        bytes.clear();
+        return false;
+    }
+    truncated = size > captureSize;
+    return true;
+}
+
+ResourcePackClientResponseEvidence captureResourcePackClientResponse(
+        const void* packet) {
+    using StreamConstructorFn = void* (*)(void*);
+    using StreamDestructorFn = void (*)(void*);
+    using WriteFn = void (*)(const void*, void*);
+
+    const auto constructorAddress =
+            minecraftImage.base + target::kBinaryStreamConstructorOffset;
+    const auto expectedStreamVtable =
+            minecraftImage.base + target::kBinaryStreamVtableOffset;
+    if (packet == nullptr || minecraftImage.base == 0 ||
+        !addressIsExecutable(minecraftImage, constructorAddress) ||
+        !addressIsInImage(minecraftImage, expectedStreamVtable) ||
+        !matchesSignature(
+                reinterpret_cast<const void*>(constructorAddress),
+                target::kBinaryStreamConstructorSignature)) {
+        return resourcePackCaptureError("serializer target validation failed");
+    }
+
+    std::uintptr_t packetVtable = 0;
+    std::array<std::byte, sizeof(packetVtable)> packetVtableBytes{};
+    if (!copyReadableMemory(packet, packetVtableBytes))
+        return resourcePackCaptureError("packet vtable was unreadable");
+    std::memcpy(
+            &packetVtable, packetVtableBytes.data(), sizeof(packetVtable));
+    const auto writeSlot = packetVtable +
+            target::kPacketWriteVtableSlot * sizeof(std::uintptr_t);
+    if (!addressIsInImage(minecraftImage, packetVtable) ||
+        !addressIsInImage(minecraftImage, writeSlot)) {
+        return resourcePackCaptureError("packet serializer slot validation failed");
+    }
+    std::uintptr_t writeAddress = 0;
+    std::memcpy(
+            &writeAddress, reinterpret_cast<const void*>(writeSlot),
+            sizeof(writeAddress));
+    if (!addressIsExecutable(minecraftImage, writeAddress))
+        return resourcePackCaptureError("packet serializer target was not executable");
+
+    alignas(std::max_align_t)
+            std::array<std::byte, target::kBinaryStreamObjectSize> streamStorage{};
+    auto* stream = reinterpret_cast<StreamConstructorFn>(constructorAddress)(
+            streamStorage.data());
+    std::uintptr_t streamVtable = 0;
+    std::memcpy(&streamVtable, stream, sizeof(streamVtable));
+    if (streamVtable != expectedStreamVtable) {
+        return resourcePackCaptureError("BinaryStream vtable validation failed");
+    }
+
+    reinterpret_cast<WriteFn>(writeAddress)(packet, stream);
+    std::vector<std::uint8_t> serialized;
+    bool truncated = false;
+    const bool copied = binaryStreamBytes(stream, serialized, truncated);
+
+    std::uintptr_t destructorAddress = 0;
+    std::memcpy(
+            &destructorAddress, reinterpret_cast<const void*>(streamVtable),
+            sizeof(destructorAddress));
+    if (addressIsExecutable(minecraftImage, destructorAddress)) {
+        reinterpret_cast<StreamDestructorFn>(destructorAddress)(stream);
+    } else {
+        return resourcePackCaptureError("BinaryStream destructor validation failed");
+    }
+    if (!copied)
+        return resourcePackCaptureError("serialized response bytes were unreadable");
+    return decodeResourcePackClientResponse(serialized, truncated);
+}
+
+struct TransportDisconnectObservation {
+    std::uint32_t messageId{};
+    std::uint32_t packetLength{};
+    std::chrono::steady_clock::time_point observedAt{};
+    bool rawBytesTruncated{};
+    std::vector<std::uint8_t> rawBytes;
+    bool valid{false};
+};
+
+thread_local TransportDisconnectObservation lastTransportDisconnect;
+
 struct UniversalValidationObservation {
     std::int32_t packetId{-1};
     std::chrono::steady_clock::time_point capturedAt{};
@@ -273,11 +485,113 @@ std::vector<PacketHistoryEntry> snapshotInboundPacketHistory(
     return result;
 }
 
+std::vector<OutboundPacketHistoryEntry> snapshotOutboundPacketHistory(
+        std::chrono::steady_clock::time_point now) {
+    std::lock_guard lock(outboundPacketHistoryMutex);
+    std::vector<OutboundPacketHistoryEntry> result;
+    result.reserve(outboundPacketHistoryCount);
+    const auto oldest =
+            (outboundPacketHistoryNext + packetHistoryCapacity -
+             outboundPacketHistoryCount) % packetHistoryCapacity;
+    for (std::size_t index = 0; index < outboundPacketHistoryCount; ++index) {
+        const auto& packet =
+                outboundPacketHistory[(oldest + index) % packetHistoryCapacity];
+        if (!packet.valid)
+            continue;
+        const auto age = now >= packet.observedAt
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                          now - packet.observedAt).count()
+                : 0;
+        result.push_back({
+                packet.packetId, static_cast<std::uint64_t>(age),
+                packet.resourcePackResponse});
+    }
+    return result;
+}
+
+void rememberOutboundPacket(void* packet, std::int32_t packetId) {
+    std::optional<ResourcePackClientResponseEvidence> resourcePackResponse;
+    if (packetId == 8)
+        resourcePackResponse = captureResourcePackClientResponse(packet);
+    std::lock_guard lock(outboundPacketHistoryMutex);
+    outboundPacketHistory[outboundPacketHistoryNext] = {
+            packetId, std::chrono::steady_clock::now(),
+            std::move(resourcePackResponse), true};
+    outboundPacketHistoryNext =
+            (outboundPacketHistoryNext + 1) % packetHistoryCapacity;
+    outboundPacketHistoryCount = std::min(
+            outboundPacketHistoryCount + 1, packetHistoryCapacity);
+}
+
+const char* rakNetMessageName(std::uint32_t messageId) {
+    switch (messageId) {
+    case 21: return "ID_DISCONNECTION_NOTIFICATION";
+    case 22: return "ID_CONNECTION_LOST";
+    default: return "UNRECOGNIZED";
+    }
+}
+
+std::optional<TransportDisconnectEvidence> recentTransportDisconnect(
+        std::chrono::steady_clock::time_point now) {
+    if (!lastTransportDisconnect.valid ||
+        now - lastTransportDisconnect.observedAt > std::chrono::seconds(30)) {
+        return std::nullopt;
+    }
+    const auto age = now >= lastTransportDisconnect.observedAt
+            ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now - lastTransportDisconnect.observedAt).count()
+            : 0;
+    TransportDisconnectEvidence result;
+    result.messageId = lastTransportDisconnect.messageId;
+    result.messageName = rakNetMessageName(lastTransportDisconnect.messageId);
+    result.packetLength = lastTransportDisconnect.packetLength;
+    result.ageMilliseconds = static_cast<std::uint64_t>(age);
+    result.rawBytesTruncated = lastTransportDisconnect.rawBytesTruncated;
+    result.rawBytes = lastTransportDisconnect.rawBytes;
+    return result;
+}
+
 void rememberInboundPacket(const InboundPacketObservation& packet) {
     inboundPacketHistory[inboundPacketHistoryNext] = packet;
     inboundPacketHistoryNext = (inboundPacketHistoryNext + 1) % packetHistoryCapacity;
     inboundPacketHistoryCount = std::min(
             inboundPacketHistoryCount + 1, packetHistoryCapacity);
+}
+
+extern "C" void dobby_capture_raknet_message(
+        std::uint32_t messageId, const void* packet) {
+    if ((messageId != 21 && messageId != 22) || packet == nullptr)
+        return;
+
+    constexpr std::ptrdiff_t packetLengthOffset = 0x98;
+    constexpr std::ptrdiff_t packetDataOffset = 0xa0;
+    constexpr std::size_t maximumCapture = 64;
+    std::uint32_t packetLength = 0;
+    const std::uint8_t* packetData = nullptr;
+    std::array<std::byte, sizeof(packetLength)> lengthBytes{};
+    std::array<std::byte, sizeof(packetData)> dataPointerBytes{};
+    const auto* packetBytes = static_cast<const std::byte*>(packet);
+    if (!copyReadableMemory(packetBytes + packetLengthOffset, lengthBytes) ||
+        !copyReadableMemory(packetBytes + packetDataOffset, dataPointerBytes)) {
+        return;
+    }
+    std::memcpy(&packetLength, lengthBytes.data(), sizeof(packetLength));
+    std::memcpy(&packetData, dataPointerBytes.data(), sizeof(packetData));
+    if (packetData == nullptr || packetLength == 0)
+        return;
+
+    const auto captureSize = std::min<std::size_t>(packetLength, maximumCapture);
+    std::vector<std::uint8_t> rawBytes(captureSize);
+    if (!copyReadableMemory(
+                packetData,
+                std::span<std::byte>(
+                        reinterpret_cast<std::byte*>(rawBytes.data()),
+                        rawBytes.size()))) {
+        return;
+    }
+    lastTransportDisconnect = {
+            messageId, packetLength, std::chrono::steady_clock::now(),
+            packetLength > captureSize, std::move(rawBytes), true};
 }
 
 void readErrorText(
@@ -590,7 +904,9 @@ bool captureBadPacketDisconnect(
             skipMessage, source != nullptr, telemetryOverride != nullptr);
     if (disconnect) {
         disconnect->recentPackets = snapshotInboundPacketHistory(now);
+        disconnect->recentOutboundPackets = snapshotOutboundPacketHistory(now);
         disconnect->nativeStackImageOffsets = captureMinecraftStack();
+        disconnect->transport = recentTransportDisconnect(now);
     }
     auto diagnostic = buildDiagnostic(
             *record, std::move(streamFailure),
@@ -617,7 +933,9 @@ bool captureDisconnect(
 
     const auto now = std::chrono::steady_clock::now();
     evidence->recentPackets = snapshotInboundPacketHistory(now);
+    evidence->recentOutboundPackets = snapshotOutboundPacketHistory(now);
     evidence->nativeStackImageOffsets = captureMinecraftStack();
+    evidence->transport = recentTransportDisconnect(now);
     auto diagnostic = buildDisconnectDiagnostic(
             std::move(*evidence),
             "ClientNetworkHandler::onDisconnect inline entry");
@@ -658,6 +976,7 @@ void onDisconnectDetour(
     if (outermost) {
         handlingDisconnect = false;
         lastInboundPacket.valid = false;
+        lastTransportDisconnect.valid = false;
         // Bedrock creates its codeword screen inside this callback. Queue the
         // Dobby window afterward so the exact reason and evidence stay visible.
         if (captured && runtimeState().autoPopup())
@@ -1028,6 +1347,50 @@ bool installDisconnectDiagnosticHooks(const MinecraftImage& image) {
     return true;
 }
 
+bool installRakNetDisconnectCauseProbe(const MinecraftImage& image) {
+    const auto address =
+            image.base + target::kRakNetMessageDispatchProbeOffset;
+    if (!addressIsExecutable(image, address) ||
+        !matchesSignature(
+                reinterpret_cast<const void*>(address),
+                target::kRakNetMessageDispatchProbeSignature)) {
+        logLine("ERROR: RakNet disconnect-cause probe signature mismatch");
+        return false;
+    }
+    if (mcpelauncher_patch == nullptr) {
+        logLine("ERROR: launcher patch API unavailable for RakNet disconnect-cause probe");
+        return false;
+    }
+
+    std::array<std::uint8_t, 16> replacement{};
+    constexpr std::uint32_t loadTarget = 0x58000050U;
+    constexpr std::uint32_t branchTarget = 0xd61f0200U;
+    const auto detour =
+            reinterpret_cast<std::uintptr_t>(dobby_raknet_message_detour);
+    std::memcpy(replacement.data(), &loadTarget, sizeof(loadTarget));
+    std::memcpy(replacement.data() + 4, &branchTarget, sizeof(branchTarget));
+    std::memcpy(replacement.data() + 8, &detour, sizeof(detour));
+
+    dobby_raknet_message_low_continue = reinterpret_cast<void*>(
+            image.base + target::kRakNetMessageDispatchLowContinueOffset);
+    dobby_raknet_message_high_continue = reinterpret_cast<void*>(
+            image.base + target::kRakNetMessageDispatchHighContinueOffset);
+    dobby_raknet_message_greater_continue = reinterpret_cast<void*>(
+            image.base + target::kRakNetMessageDispatchGreaterContinueOffset);
+    auto* entry = reinterpret_cast<void*>(address);
+    if (mcpelauncher_patch(
+                entry, replacement.data(), replacement.size()) == nullptr ||
+        std::memcmp(entry, replacement.data(), replacement.size()) != 0) {
+        dobby_raknet_message_low_continue = nullptr;
+        dobby_raknet_message_high_continue = nullptr;
+        dobby_raknet_message_greater_continue = nullptr;
+        logLine("ERROR: launcher rejected RakNet disconnect-cause probe");
+        return false;
+    }
+    logLine("installed RakNet disconnect-cause probe");
+    return true;
+}
+
 } // namespace
 
 void installPacketHooks() {
@@ -1047,6 +1410,7 @@ void installPacketHooks() {
     const bool packetReadResult = installPacketReadResultHook(image);
     const bool universalValidation = installUniversalValidationHook(image);
     const bool disconnectCorrelation = installDisconnectDiagnosticHooks(image);
+    const bool transportCauseProbe = installRakNetDisconnectCauseProbe(image);
     const bool directViolationHook = installDirectViolationHook(image);
     const bool warningHook = installViolationHook(image);
     if (!packetReadResult && !universalValidation && !disconnectCorrelation &&
@@ -1057,6 +1421,7 @@ void installPacketHooks() {
     }
 
     const bool complete = packetReadResult && universalValidation && disconnectCorrelation &&
+            transportCauseProbe &&
             directViolationHook && warningHook && byteTraceProbe &&
             packetEndProbe && schemaProbe;
     const std::string status = complete
@@ -1083,6 +1448,14 @@ void installPacketHooks() {
                     ? "universal inbound deserialize results and validation, downstream violations, disconnect correlation, packet boundaries, byte tracing, and client field tracing active"
                     : status);
     logLine(std::string("READY: Dobby ") + kDobbyVersion + " developer diagnostics active");
+}
+
+void registerPacketDiagnosticOutboundHistory() {
+    if (registerOutboundPacketHandler(rememberOutboundPacket)) {
+        logLine("packet diagnostics: outbound packet history active");
+    } else {
+        logLine("ERROR: packet diagnostics could not register outbound history");
+    }
 }
 
 } // namespace dobby

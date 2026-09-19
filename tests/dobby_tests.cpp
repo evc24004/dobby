@@ -6,6 +6,7 @@
 #include "diagnostics/disconnect_decoder.hpp"
 #include "diagnostics/protocol_dump.hpp"
 #include "diagnostics/report_builder.hpp"
+#include "diagnostics/resource_pack_response.hpp"
 #include "diagnostics/stream_probe.hpp"
 #include "diagnostics/validation_decoder.hpp"
 #include "diagnostics/violation_decoder.hpp"
@@ -78,6 +79,11 @@ void testViolationDecoder() {
     static_assert(
             dobby::target::kAllowIncomingPacketIdVtableSlotOffset ==
             0x12d24c38);
+    static_assert(
+            dobby::target::kRakNetMessageDispatchProbeOffset ==
+            0x0c65089c);
+    static_assert(
+            dobby::target::kRakNetMessageDispatchProbeSignature[0] == 0x9f);
     std::array<std::byte, 0x80> packet{};
     store<std::int32_t>(packet.data() + dobby::kViolationTypeOffset, 0);
     store<std::int32_t>(packet.data() + dobby::kViolationSeverityOffset, 2);
@@ -171,6 +177,17 @@ void testDisconnectDecoderAndReport() {
     require(evidence->telemetryOverridePresent);
     evidence->nativeStackImageOffsets = {0x1234, 0x5678};
     evidence->recentPackets = {{19, 31, 7}, {63, 73669, 1}};
+    evidence->recentOutboundPackets = {
+            {4, 14, std::nullopt}, {8, 9, std::nullopt}};
+    evidence->recentOutboundPackets.back().resourcePackResponse =
+            dobby::ResourcePackClientResponseEvidence{
+                    1, "send_packs", {"pack-a", "pack-b"}, false,
+                    {0x01, 0x0a, 's', 'e', 'n', 'd', '_', 'p', 'a', 'c', 'k', 's',
+                     0x02, 0x06, 'p', 'a', 'c', 'k', '-', 'a',
+                     0x06, 'p', 'a', 'c', 'k', '-', 'b'},
+                    true, {}};
+    evidence->transport = dobby::TransportDisconnectEvidence{
+            21, "ID_DISCONNECTION_NOTIFICATION", 1, 0, false, {0x15}};
 
     const auto diagnostic = dobby::buildDisconnectDiagnostic(
             std::move(*evidence), "unit test disconnect");
@@ -186,6 +203,17 @@ void testDisconnectDecoderAndReport() {
             std::string::npos);
     require(diagnostic.report.find("libminecraftpe+0x1234") !=
             std::string::npos);
+    require(diagnostic.report.find(
+                    "Transport event: ID_DISCONNECTION_NOTIFICATION (21)") !=
+            std::string::npos);
+    require(diagnostic.report.find(
+                    "ResourcePackClientResponse (8 / 0x8) age 9ms") !=
+            std::string::npos);
+    require(diagnostic.report.find(
+                    "Response status: 1 | serialized name: send_packs") !=
+            std::string::npos);
+    require(diagnostic.report.find("Requested resource-pack IDs:") !=
+            std::string::npos);
     require(diagnostic.json.find("\"event\":\"client_disconnect\"") !=
             std::string::npos);
     require(diagnostic.json.find("\"disconnect_reason\":41") !=
@@ -195,6 +223,18 @@ void testDisconnectDecoderAndReport() {
     require(diagnostic.json.find("\"codeword\":\"Bat\"") !=
             std::string::npos);
     require(diagnostic.json.find("\"latest_packet_id\":63") !=
+            std::string::npos);
+    require(diagnostic.json.find(
+                    "\"message_name\":\"ID_DISCONNECTION_NOTIFICATION\"") !=
+            std::string::npos);
+    require(diagnostic.json.find(
+                    "\"packet_name\":\"ResourcePackClientResponse\"") !=
+            std::string::npos);
+    require(diagnostic.json.find(
+                    "\"status_name_observed\":\"send_packs\"") !=
+            std::string::npos);
+    require(diagnostic.json.find(
+                    "\"resource_pack_ids\":[\"pack-a\",\"pack-b\"]") !=
             std::string::npos);
 
     dobby::DisconnectEvidence badPacketEvidence;
@@ -224,6 +264,40 @@ void testDisconnectDecoderAndReport() {
     require(empty->reasonName == "Timeout");
     require(empty->codeword == "Kelp");
     require(empty->messageFromServer.empty());
+}
+
+void testResourcePackClientResponseDecoder() {
+    const std::vector<std::uint8_t> sendPacks{
+            0x01, 0x0a, 's', 'e', 'n', 'd', '_', 'p', 'a', 'c', 'k', 's',
+            0x02, 0x06, 'p', 'a', 'c', 'k', '-', 'a',
+            0x06, 'p', 'a', 'c', 'k', '-', 'b'};
+    const auto decoded = dobby::decodeResourcePackClientResponse(sendPacks);
+    require(decoded.decodeComplete);
+    require(decoded.status == 1);
+    require(decoded.serializedStatusName == "send_packs");
+    require(decoded.resourcePackIds ==
+            std::vector<std::string>{"pack-a", "pack-b"});
+    require(std::string(dobby::resourcePackResponseStatusName(0)) == "refused");
+    require(std::string(dobby::resourcePackResponseStatusName(1)) == "send_packs");
+    require(std::string(dobby::resourcePackResponseStatusName(2)) ==
+            "have_all_packs");
+    require(std::string(dobby::resourcePackResponseStatusName(3)) == "completed");
+
+    const std::vector<std::uint8_t> complete{
+            0x03, 0x09, 'c', 'o', 'm', 'p', 'l', 'e', 't', 'e', 'd'};
+    const auto completed = dobby::decodeResourcePackClientResponse(complete);
+    require(completed.decodeComplete);
+    require(completed.status == 3);
+    require(completed.resourcePackIds.empty());
+
+    const std::vector<std::uint8_t> malformed{0x01, 0x05, 'b', 'a'};
+    const auto rejected = dobby::decodeResourcePackClientResponse(malformed);
+    require(!rejected.decodeComplete);
+    require(rejected.decodeError ==
+            "invalid or incomplete response status name");
+    const auto truncated = dobby::decodeResourcePackClientResponse(complete, true);
+    require(!truncated.decodeComplete);
+    require(truncated.rawBytesTruncated);
 }
 
 void testUniversalValidationDecoder() {
@@ -1442,6 +1516,7 @@ void testDobbyWindowPolicy() {
 int main() {
     testViolationDecoder();
     testDisconnectDecoderAndReport();
+    testResourcePackClientResponseDecoder();
     testUniversalValidationDecoder();
     testStreamProbeAndReport();
     testClientSchemaFieldTrace();

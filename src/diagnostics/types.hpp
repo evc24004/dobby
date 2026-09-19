@@ -48,6 +48,31 @@ struct PacketHistoryEntry {
     std::uint64_t ageMilliseconds{};
 };
 
+struct ResourcePackClientResponseEvidence {
+    std::int32_t status{-1};
+    std::string serializedStatusName;
+    std::vector<std::string> resourcePackIds;
+    bool rawBytesTruncated{};
+    std::vector<std::uint8_t> rawBytes;
+    bool decodeComplete{};
+    std::string decodeError;
+};
+
+struct OutboundPacketHistoryEntry {
+    std::int32_t packetId{};
+    std::uint64_t ageMilliseconds{};
+    std::optional<ResourcePackClientResponseEvidence> resourcePackResponse;
+};
+
+struct TransportDisconnectEvidence {
+    std::uint32_t messageId{};
+    std::string messageName;
+    std::uint32_t packetLength{};
+    std::uint64_t ageMilliseconds{};
+    bool rawBytesTruncated{};
+    std::vector<std::uint8_t> rawBytes;
+};
+
 struct ValidationSourceEvidence {
     std::uint64_t filenameHash{};
     std::string filename;
@@ -91,6 +116,8 @@ struct DisconnectEvidence {
     std::string messageBodyOverrideStorage;
     std::vector<std::uint64_t> nativeStackImageOffsets;
     std::vector<PacketHistoryEntry> recentPackets;
+    std::vector<OutboundPacketHistoryEntry> recentOutboundPackets;
+    std::optional<TransportDisconnectEvidence> transport;
 };
 
 struct Diagnostic {

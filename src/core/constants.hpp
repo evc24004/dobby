@@ -6,7 +6,7 @@
 
 namespace dobby {
 
-inline constexpr char kDobbyVersion[] = "2.15.0";
+inline constexpr char kDobbyVersion[] = "2.17.0";
 inline constexpr char kMinecraftVersion[] = "1.26.51.1";
 inline constexpr char kMinecraftBuildId[] = "712509dc14ccc233e91f267937dfb46ecdcc4b68";
 inline constexpr char kMinecraftDataVersion[] = "1.26.40";
@@ -74,6 +74,21 @@ inline constexpr std::uintptr_t kAllowIncomingPacketIdVtableSlotOffset = 0x12d24
 inline constexpr std::array<std::uint8_t, 16> kAllowIncomingPacketIdSignature{
         0x5f, 0x14, 0x00, 0x71, 0x09, 0x24, 0x43, 0x39,
         0xe8, 0xd7, 0x9f, 0x1a, 0x08, 0x79, 0x1f, 0x53};
+
+// RakNetConnector's packet pump has already read Packet::data[0] into w20 at
+// this instruction. IDs 21 and 22 are the exact transport events that its next
+// branch flattens into DisconnectFailReason::Disconnected (41).
+inline constexpr std::uintptr_t kRakNetMessageDispatchProbeOffset = 0x0c65089c;
+inline constexpr std::array<std::uint8_t, 16>
+        kRakNetMessageDispatchProbeSignature{
+                0x9f, 0x36, 0x02, 0x71, 0xa8, 0x02, 0x00, 0x54,
+                0x9f, 0x52, 0x00, 0x71, 0x2c, 0x04, 0x00, 0x54};
+inline constexpr std::uintptr_t kRakNetMessageDispatchLowContinueOffset =
+        0x0c6508ac;
+inline constexpr std::uintptr_t kRakNetMessageDispatchHighContinueOffset =
+        0x0c6508f4;
+inline constexpr std::uintptr_t kRakNetMessageDispatchGreaterContinueOffset =
+        0x0c65092c;
 
 inline constexpr std::uintptr_t kStreamReadOffset = 0x12804684;
 inline constexpr std::uintptr_t kStreamReadVtableSlotOffset = 0x13267ba0;

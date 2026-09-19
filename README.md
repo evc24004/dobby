@@ -57,6 +57,17 @@ reason and stage, the 1.26.51.1 enum name and shipped UI codeword (for example,
 last 32 inbound packet IDs/sizes/ages, and an image-relative native stack. This
 path is passive and does not suppress, rewrite, or retry the disconnect.
 
+For generic `Bat` disconnects, Dobby also probes the exact RakNet dispatch
+branch that produces reason 41. It distinguishes
+`ID_DISCONNECTION_NOTIFICATION` (21) from `ID_CONNECTION_LOST` (22), preserves
+bounded raw transport bytes, and correlates the last 32 outbound Minecraft
+packet IDs. During resource-pack negotiation this shows whether the client sent
+`ResourcePackClientResponse` before the transport closed. For packet 8, Dobby
+serializes a passive copy into an isolated `BinaryStream` and records the exact
+status (`refused`, `send_packs`, `have_all_packs`, or `completed`), the observed
+status string, requested pack IDs, and bounded raw bytes. Those isolated bytes
+are never sent.
+
 The latest paste-ready report is `latest-dobby-violation.txt`; the complete
 machine-readable snapshot for AI analysis is `latest-dobby-ai.json`, and the
 append-only history is `dobby-events.jsonl`. These files live in the configured
@@ -73,7 +84,7 @@ traffic overlays can remain disabled without disabling packet diagnostics.
 
 ## Target
 
-- Dobby `2.15.0`
+- Dobby `2.17.0`
 - Minecraft Android `1.26.51.1`
 - `arm64-v8a`
 - network protocol `2193`

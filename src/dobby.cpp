@@ -38,6 +38,7 @@ extern "C" [[gnu::visibility("default")]] void mod_init() {
 #if defined(__ANDROID__)
     dobby::dumpProtocolOnStartup();
     dobby::installOutboundPacketHook();
+    dobby::registerPacketDiagnosticOutboundHistory();
     dobby::installNetworkMetricsHook();
     dobby::installPacketTrafficHooks();
     dobby::installChunkMetricsHooks();

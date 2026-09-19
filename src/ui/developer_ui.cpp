@@ -7,6 +7,7 @@
 #include "core/constants.hpp"
 #include "core/runtime_state.hpp"
 #include "diagnostics/report_builder.hpp"
+#include "diagnostics/resource_pack_response.hpp"
 #include "hooks/chest_esp_hook.hpp"
 #include "hooks/entity_hitbox_hook.hpp"
 #include "hooks/ore_esp_scanner.hpp"
@@ -194,12 +195,39 @@ void showLatestViolation(void*) {
             context += "Server: " + disconnect.messageFromServer + "\n";
         if (!disconnect.messageBodyOverride.empty())
             context += "Body: " + disconnect.messageBodyOverride + "\n";
+        if (disconnect.transport) {
+            const auto& transport = *disconnect.transport;
+            context += "Transport: " + transport.messageName + " (" +
+                    std::to_string(transport.messageId) + ") age " +
+                    std::to_string(transport.ageMilliseconds) + "ms\n";
+        }
         if (!disconnect.recentPackets.empty()) {
             const auto& latest = disconnect.recentPackets.back();
             context += "Latest inbound: " + std::string(packetName(latest.packetId)) +
                     " (" + std::to_string(latest.packetId) + ") size " +
                     std::to_string(latest.packetSize) + " age " +
                     std::to_string(latest.ageMilliseconds) + "ms";
+        }
+        if (!disconnect.recentOutboundPackets.empty()) {
+            const auto& latest = disconnect.recentOutboundPackets.back();
+            if (!context.empty() && context.back() != '\n')
+                context += '\n';
+            context += "Latest outbound: " +
+                    std::string(packetName(latest.packetId)) + " (" +
+                    std::to_string(latest.packetId) + ") age " +
+                    std::to_string(latest.ageMilliseconds) + "ms";
+            if (latest.resourcePackResponse) {
+                const auto& response = *latest.resourcePackResponse;
+                context += "\nPack response: " +
+                        std::to_string(response.status) + " / " +
+                        (response.serializedStatusName.empty()
+                                 ? std::string(resourcePackResponseStatusName(
+                                           response.status))
+                                 : response.serializedStatusName);
+                if (!response.decodeComplete)
+                    context += " (decode incomplete: " +
+                            response.decodeError + ")";
+            }
         }
         if (context.empty())
             context = "No server message or recent inbound packet was available.";
