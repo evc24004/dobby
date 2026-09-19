@@ -688,6 +688,12 @@ bool persistDump(const ProtocolDumpObservation& dump) {
 void dumpProtocolOnStartup() {
     if (dumpStarted.exchange(true, std::memory_order_acq_rel))
         return;
+    if (target::kPacketFactoryOffset == 0 ||
+        target::kPacketSchemaWriterVtableOffset == 0) {
+        logLine("protocol dump: disabled; 1.26.51.1 factory/schema targets are unverified");
+        recordLifecycleEvent("protocol_dump_disabled", "target mapping pending");
+        return;
+    }
     const auto image = findMinecraftImage();
     if (image.base == 0 || mcpelauncher_patch == nullptr) {
         logLine("ERROR: protocol startup dump unavailable; image or patch API missing");

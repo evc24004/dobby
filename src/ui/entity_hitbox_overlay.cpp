@@ -526,9 +526,10 @@ void drawLines(const float* vertices, std::size_t floatCount,
 void drawEntityHitboxes(void*, void* display, void* surface) {
     const bool espEnabled = runtimeState().anyEspEnabled();
     const bool metricsEnabled = runtimeState().networkMetricsOverlay();
+    const bool worldRecentlyRendered = clientWorldRecentlyRendered();
     const bool packetTrafficEnabled = runtimeState().packetTrafficOverlay() &&
             runtimeState().packetTrafficAvailable() &&
-            clientWorldRecentlyRendered();
+            worldRecentlyRendered;
     if (!espEnabled && !metricsEnabled && !packetTrafficEnabled)
         return;
 
@@ -537,8 +538,14 @@ void drawEntityHitboxes(void*, void* display, void* surface) {
     const bool showOres = runtimeState().oreEsp();
     if (metricsEnabled)
         captureObservedClientServerTick();
-    const NetworkMetricsSnapshot metrics = metricsEnabled
+    NetworkMetricsSnapshot metrics = metricsEnabled
             ? currentNetworkMetrics() : NetworkMetricsSnapshot{};
+    // A live client-world render is the authoritative connection signal for
+    // presentation. Keep every diagnostic row visible while individual hooks
+    // are still waiting for their first sample instead of silently reducing
+    // the overlay to FPS and memory.
+    if (metricsEnabled && worldRecentlyRendered)
+        metrics.connected = true;
     const ClientPerformanceSnapshot performance = metricsEnabled
             ? captureClientPerformance() : ClientPerformanceSnapshot{};
     const PacketTrafficSnapshot packetTraffic = packetTrafficEnabled

@@ -87,9 +87,10 @@ NetworkMetricsText formatNetworkMetrics(
         const NetworkMetricsSnapshot& metrics,
         const ClientPerformanceSnapshot& performance) {
     NetworkMetricsText result;
-    if (metrics.connected && metrics.pingMilliseconds) {
-        result.ping =
-                "PING " + std::to_string(*metrics.pingMilliseconds) + " MS";
+    if (metrics.connected) {
+        result.ping = metrics.pingMilliseconds
+                ? "PING " + std::to_string(*metrics.pingMilliseconds) + " MS"
+                : "PING --";
         if (metrics.observedTicksPerSecond) {
             char value[32]{};
             std::snprintf(value, sizeof(value), "TPS~ %.1f",
@@ -100,10 +101,10 @@ NetworkMetricsText formatNetworkMetrics(
         }
         result.chunks = "CHUNKS " + std::to_string(metrics.loadedChunks) +
                 " (" + std::to_string(metrics.chunksPerSecond) + "/S)";
-        if (metrics.outstandingSubChunkRequests) {
-            result.pending = "PENDING " +
-                    std::to_string(*metrics.outstandingSubChunkRequests);
-        }
+        result.pending = metrics.outstandingSubChunkRequests
+                ? "PENDING " +
+                        std::to_string(*metrics.outstandingSubChunkRequests)
+                : "PENDING --";
     }
     if (performance.framesPerSecond) {
         char value[32]{};

@@ -11,7 +11,7 @@ manifest=mod.json
 
 launcher_root="$HOME/Library/Application Support/mcpelauncher"
 mods_root="$launcher_root/mods"
-install_dir="$mods_root/dobby/1.26.45.1/arm64-v8a/"
+install_dir="$mods_root/dobby/1.26.51.1/arm64-v8a/"
 
 case "$install_dir" in
     "$mods_root"/*) ;;

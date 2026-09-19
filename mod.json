@@ -7,16 +7,16 @@
     "image": "",
     "versions": [
       {
-        "version": "2.13.0",
-        "minecraft": "= 1.26.45.1",
+        "version": "2.15.0",
+        "minecraft": "= 1.26.51.1",
         "assets": {
           "arm64-v8a": "local"
         },
         "extraVersions": [
           {
-            "version_name": "1.26.45.1",
+            "version_name": "1.26.51.1",
             "codes": {
-              "arm64-v8a": 972604501
+              "arm64-v8a": 972605101
             }
           }
         ]
@@ -24,17 +24,17 @@
     ]
   },
   "version": {
-    "version": "2.13.0",
-    "minecraft": "= 1.26.45.1",
-    "minecraftVersion": "1.26.45.1",
+    "version": "2.15.0",
+    "minecraft": "= 1.26.51.1",
+    "minecraftVersion": "1.26.51.1",
     "assets": {
       "arm64-v8a": "local"
     },
     "extraVersions": [
       {
-        "version_name": "1.26.45.1",
+        "version_name": "1.26.51.1",
         "codes": {
-          "arm64-v8a": 972604501
+          "arm64-v8a": 972605101
         }
       }
     ]

@@ -19,6 +19,7 @@ std::uint32_t dobbyWindowFlags(std::string_view title, std::uint32_t flags) {
 
 #include "platform/launcher.hpp"
 #include "platform/log.hpp"
+#include "ui/developer_ui.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -68,6 +69,11 @@ bool applyPolicyNow(const char* title) {
 }
 
 void applyRequestedWindows(void*, void*, void*) {
+    // Popup requests originate from packet/network callbacks. Consume them
+    // here on the launcher's render/UI thread so worker-thread callbacks
+    // cannot lose the window behind Minecraft's generic Block screen.
+    showPendingViolationPopup();
+
     const std::uint32_t requests = requestedWindows.load(std::memory_order_acquire);
     std::uint32_t applied = 0;
     if ((requests & kStatusWindowRequest) != 0 && applyPolicyNow(kStatusWindowTitle))

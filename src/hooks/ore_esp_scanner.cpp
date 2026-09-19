@@ -617,6 +617,12 @@ bool validateScannerTargets(const MinecraftImage& image) {
 } // namespace
 
 bool initializeOreEspScanner(const MinecraftImage& image) {
+    if (!target::kOreTargetsAvailable) {
+        ready.store(false, std::memory_order_release);
+        runtimeState().setOreEspAvailable(false);
+        logLine("ore ESP: disabled; 1.26.51.1 storage dispatch targets are unverified");
+        return false;
+    }
     const bool validated = image.base != 0 && validateScannerTargets(image);
     if (!validated) {
         ready.store(false, std::memory_order_release);

@@ -114,10 +114,10 @@ void installPacketTrafficHooks() {
         logLine("ERROR: packet traffic unavailable; patch API or image missing");
         return;
     }
-    const auto expectedVtable =
-            minecraftImage.base + target::kPacketObserverVtableOffset;
-    if (!addressIsInImage(minecraftImage, expectedVtable) ||
-        !validateTarget(target::kPacketSentToOffset,
+    // The two concrete observer slots independently identify the live object
+    // and both are relocation-verified against their functions. A separate
+    // RTTI-derived vtable address point adds no safety to those exact checks.
+    if (!validateTarget(target::kPacketSentToOffset,
                         target::kPacketSentToVtableSlotOffset,
                         target::kPacketSentToSignature) ||
         !validateTarget(target::kPacketReceivedFromOffset,

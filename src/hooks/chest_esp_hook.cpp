@@ -117,7 +117,9 @@ constexpr std::size_t kMaximumTrackedChunks = 4'096;
 constexpr std::size_t kMaximumPendingChests = 8'192;
 
 std::atomic_bool installed{false};
+std::atomic_bool metricsLifecycleInstalled{false};
 std::atomic_bool firstChestLogged{false};
+std::atomic_bool firstMetricsChunkLogged{false};
 std::atomic_bool layoutFailureLogged{false};
 std::atomic_bool capacityFailureLogged{false};
 ChunkLoadedFn originalChunkLoaded = nullptr;
@@ -348,6 +350,10 @@ void chunkLoadedDetour(void* coordinator, void* source, void* chunk) {
         if (metricsEnabled) {
             recordClientChunkLoaded(
                     identity.level, identity.position.x, identity.position.z);
+            if (!firstMetricsChunkLogged.exchange(
+                        true, std::memory_order_acq_rel)) {
+                logLine("chunk metrics: client chunk lifecycle observed");
+            }
         }
         if (chestEnabled)
             trackLoadedChunk(identity);
@@ -454,6 +460,58 @@ bool patchAddress(std::uintptr_t address, const void* data, std::size_t size) {
 
 bool patchSlot(std::uintptr_t slotAddress, std::uintptr_t replacement) {
     return patchAddress(slotAddress, &replacement, sizeof(replacement));
+}
+
+bool installMetricsChunkLifecycleHooks(const MinecraftImage& image) {
+    if (!validateHookTarget(
+                image, target::kChunkCoordinatorOnChunkLoadedOffset,
+                target::kChunkCoordinatorOnChunkLoadedSlotOffset,
+                target::kChunkCoordinatorOnChunkLoadedSignature) ||
+        !validateHookTarget(
+                image, target::kChunkCoordinatorOnSubChunkLoadedOffset,
+                target::kChunkCoordinatorOnSubChunkLoadedSlotOffset,
+                target::kChunkCoordinatorOnSubChunkLoadedSignature) ||
+        !validateHookTarget(
+                image, target::kChunkCoordinatorOnChunkUnloadedOffset,
+                target::kChunkCoordinatorOnChunkUnloadedSlotOffset,
+                target::kChunkCoordinatorOnChunkUnloadedSignature)) {
+        return false;
+    }
+
+    originalChunkLoaded = reinterpret_cast<ChunkLoadedFn>(
+            image.base + target::kChunkCoordinatorOnChunkLoadedOffset);
+    originalSubChunkLoaded = reinterpret_cast<SubChunkLoadedFn>(
+            image.base + target::kChunkCoordinatorOnSubChunkLoadedOffset);
+    originalChunkUnloaded = reinterpret_cast<ChunkUnloadedFn>(
+            image.base + target::kChunkCoordinatorOnChunkUnloadedOffset);
+    const bool loaded = patchSlot(
+            image.base + target::kChunkCoordinatorOnChunkLoadedSlotOffset,
+            reinterpret_cast<std::uintptr_t>(chunkLoadedDetour));
+    const bool subChunk = loaded && patchSlot(
+            image.base + target::kChunkCoordinatorOnSubChunkLoadedSlotOffset,
+            reinterpret_cast<std::uintptr_t>(subChunkLoadedDetour));
+    const bool unloaded = subChunk && patchSlot(
+            image.base + target::kChunkCoordinatorOnChunkUnloadedSlotOffset,
+            reinterpret_cast<std::uintptr_t>(chunkUnloadedDetour));
+    if (unloaded)
+        return true;
+
+    if (loaded) {
+        static_cast<void>(patchSlot(
+                image.base + target::kChunkCoordinatorOnChunkLoadedSlotOffset,
+                image.base + target::kChunkCoordinatorOnChunkLoadedOffset));
+    }
+    if (subChunk) {
+        static_cast<void>(patchSlot(
+                image.base +
+                        target::kChunkCoordinatorOnSubChunkLoadedSlotOffset,
+                image.base +
+                        target::kChunkCoordinatorOnSubChunkLoadedOffset));
+    }
+    originalChunkLoaded = nullptr;
+    originalSubChunkLoaded = nullptr;
+    originalChunkUnloaded = nullptr;
+    return false;
 }
 
 bool validateTargets(const MinecraftImage& image) {
@@ -660,6 +718,22 @@ void captureConstructedChestPosition(const void* position) {
 void installChestEspHook() {
     if (installed.load(std::memory_order_acquire))
         return;
+    if (target::kBlockActorPositionLayoutProbeOffset == 0 ||
+        target::kLevelChunkGetPositionOffset == 0) {
+        const MinecraftImage image = findMinecraftImage();
+        minecraftImage = image;
+        const bool metricsReady = image.base != 0 &&
+                installMetricsChunkLifecycleHooks(image);
+        metricsLifecycleInstalled.store(
+                metricsReady, std::memory_order_release);
+        logLine(metricsReady
+                ? "chunk metrics: client loaded-chunk lifecycle hooked"
+                : "ERROR: loaded chunk metrics unavailable; lifecycle target mismatch");
+        runtimeState().setChestEspAvailable(false);
+        runtimeState().setOreEspAvailable(false);
+        logLine("chest ESP: disabled; 1.26.51.1 BlockActor position probe is unverified");
+        return;
+    }
     const MinecraftImage image = findMinecraftImage();
     minecraftImage = image;
     const bool oreScannerReady = initializeOreEspScanner(image);

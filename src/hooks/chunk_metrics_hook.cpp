@@ -163,6 +163,14 @@ void installChunkMetricsHooks() {
         outstandingReady.load(std::memory_order_acquire)) {
         return;
     }
+    if (target::kLevelChunkVtableOffset == 0 ||
+        target::kSubChunkVtableOffset == 0 ||
+        target::kSubChunkRequestVtableOffset == 0 ||
+        target::kLevelChunkDispatcherOffset == 0 ||
+        target::kSubChunkDispatcherOffset == 0) {
+        logLine("chunk metrics: packet rate/pending paths disabled; 1.26.51.1 dispatch targets are unverified");
+        return;
+    }
     const auto image = findMinecraftImage();
     if (image.base == 0 || mcpelauncher_patch == nullptr) {
         logLine("ERROR: chunk metrics unavailable; patch API or image missing");

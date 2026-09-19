@@ -4,6 +4,7 @@
 #include "core/constants.hpp"
 #include "core/runtime_state.hpp"
 #include "diagnostics/client_schema_trace.hpp"
+#include "diagnostics/disconnect_decoder.hpp"
 #include "diagnostics/report_builder.hpp"
 #include "diagnostics/stream_probe.hpp"
 #include "diagnostics/validation_decoder.hpp"
@@ -197,7 +198,7 @@ OnDisconnectFn originalOnDisconnect = nullptr;
 std::atomic_bool schemaTraceEnabled{false};
 thread_local bool handlingViolation = false;
 thread_local bool handlingDirectViolation = false;
-thread_local bool handlingBadPacketDisconnect = false;
+thread_local bool handlingDisconnect = false;
 thread_local const void* lastViolationPacket = nullptr;
 thread_local std::chrono::steady_clock::time_point lastViolationAt{};
 MinecraftImage minecraftImage;
@@ -376,6 +377,8 @@ void captureValidationFailure(
             record, std::move(streamFailure), intercept, evidence);
     persistDiagnostic(diagnostic);
     runtimeState().addDiagnostic(std::move(diagnostic));
+    if (runtimeState().autoPopup())
+        requestLatestViolationPopup();
 }
 
 extern "C" void dobby_capture_packet_read_result(
@@ -469,8 +472,10 @@ void handleViolation(const char* intercept, const void* packet) {
 
     // Every violation is eligible for a popup. History retention and repeated
     // payloads never suppress a later disconnect after the user closes a window.
+    // Queue it for the launcher's render/UI thread so worker-thread callbacks
+    // cannot lose the window.
     if (runtimeState().autoPopup())
-        showLatestViolation();
+        requestLatestViolationPopup();
     handlingViolation = false;
 }
 
@@ -542,10 +547,10 @@ void handlePacketViolationDetour(
     if (outermost) {
         handlingDirectViolation = false;
         // Bedrock builds the disconnect UI inside the original callback for a
-        // terminating violation. Show Dobby afterward so its exact diagnostic
+        // terminating violation. Queue Dobby afterward so its exact diagnostic
         // is not hidden behind the generic Block screen.
         if (captured && runtimeState().autoPopup())
-            showLatestViolation();
+            requestLatestViolationPopup();
     }
 }
 
@@ -562,7 +567,9 @@ std::int32_t allowIncomingPacketIdDetour(
 }
 
 bool captureBadPacketDisconnect(
-        const void* messageFromServer, const void* messageBodyOverride) {
+        const void* source, std::int32_t disconnectStage,
+        const void* messageFromServer, const void* messageBodyOverride,
+        bool skipMessage, const void* telemetryOverride) {
     const auto now = std::chrono::steady_clock::now();
     const bool hasRecentPacket = lastInboundPacket.valid &&
             now - lastInboundPacket.observedAt <= std::chrono::seconds(10);
@@ -578,10 +585,42 @@ bool captureBadPacketDisconnect(
     auto streamFailure = recentStreamFailure(std::chrono::seconds(10));
     std::optional<ValidationEvidence> validation;
     recentUniversalEvidence(packetId, streamFailure, validation);
+    auto disconnect = decodeDisconnectArguments(
+            90, disconnectStage, messageFromServer, messageBodyOverride,
+            skipMessage, source != nullptr, telemetryOverride != nullptr);
+    if (disconnect) {
+        disconnect->recentPackets = snapshotInboundPacketHistory(now);
+        disconnect->nativeStackImageOffsets = captureMinecraftStack();
+    }
     auto diagnostic = buildDiagnostic(
             *record, std::move(streamFailure),
             "ClientNetworkHandler::onDisconnect BadPacket + allowIncomingPacketId",
-            std::move(validation));
+            std::move(validation), std::move(disconnect));
+    persistDiagnostic(diagnostic);
+    runtimeState().addDiagnostic(std::move(diagnostic));
+    return true;
+}
+
+bool captureDisconnect(
+        const void* source, std::int32_t disconnectReason,
+        std::int32_t disconnectStage, const void* messageFromServer,
+        const void* messageBodyOverride, bool skipMessage,
+        const void* telemetryOverride) {
+    auto evidence = decodeDisconnectArguments(
+            disconnectReason, disconnectStage, messageFromServer,
+            messageBodyOverride, skipMessage, source != nullptr,
+            telemetryOverride != nullptr);
+    if (!evidence) {
+        logLine("ERROR: unable to decode ClientNetworkHandler::onDisconnect arguments");
+        return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    evidence->recentPackets = snapshotInboundPacketHistory(now);
+    evidence->nativeStackImageOffsets = captureMinecraftStack();
+    auto diagnostic = buildDisconnectDiagnostic(
+            std::move(*evidence),
+            "ClientNetworkHandler::onDisconnect inline entry");
     persistDiagnostic(diagnostic);
     runtimeState().addDiagnostic(std::move(diagnostic));
     return true;
@@ -593,13 +632,20 @@ void onDisconnectDetour(
         const void* messageBodyOverride, bool skipMessage,
         const void* telemetryOverride) {
     constexpr std::int32_t badPacketReason = 90;
-    const bool outermost = !handlingBadPacketDisconnect;
+    const bool outermost = !handlingDisconnect;
     bool captured = false;
-    if (outermost && disconnectReason == badPacketReason &&
-        !handlingDirectViolation && !handlingViolation) {
-        handlingBadPacketDisconnect = true;
-        captured = captureBadPacketDisconnect(
-                messageFromServer, messageBodyOverride);
+    if (outermost) {
+        handlingDisconnect = true;
+        if (disconnectReason == badPacketReason) {
+            captured = captureBadPacketDisconnect(
+                    source, disconnectStage, messageFromServer,
+                    messageBodyOverride, skipMessage, telemetryOverride);
+        } else {
+            captured = captureDisconnect(
+                    source, disconnectReason, disconnectStage,
+                    messageFromServer, messageBodyOverride, skipMessage,
+                    telemetryOverride);
+        }
     }
 
     if (originalOnDisconnect != nullptr) {
@@ -610,12 +656,12 @@ void onDisconnectDetour(
     }
 
     if (outermost) {
-        handlingBadPacketDisconnect = false;
+        handlingDisconnect = false;
         lastInboundPacket.valid = false;
-        // onDisconnect creates Minecraft's generic Block screen. Queue the
-        // Dobby window after that callback so the exact report stays visible.
+        // Bedrock creates its codeword screen inside this callback. Queue the
+        // Dobby window afterward so the exact reason and evidence stay visible.
         if (captured && runtimeState().autoPopup())
-            showLatestViolation();
+            requestLatestViolationPopup();
     }
 }
 
@@ -929,7 +975,7 @@ bool installDirectViolationHook(const MinecraftImage& image) {
     return true;
 }
 
-bool installBadPacketDisconnectHooks(const MinecraftImage& image) {
+bool installDisconnectDiagnosticHooks(const MinecraftImage& image) {
     const auto disconnectAddress = image.base + target::kOnDisconnectOffset;
     const auto allowAddress = image.base + target::kAllowIncomingPacketIdOffset;
     auto* disconnectSlot = reinterpret_cast<void**>(
@@ -949,11 +995,11 @@ bool installBadPacketDisconnectHooks(const MinecraftImage& image) {
             *disconnectSlot == reinterpret_cast<void*>(disconnectAddress) &&
             *allowSlot == reinterpret_cast<void*>(allowAddress);
     if (!valid) {
-        logLine("ERROR: BadPacket disconnect correlation ABI mismatch");
+        logLine("ERROR: disconnect diagnostic hook ABI mismatch");
         return false;
     }
     if (mcpelauncher_patch == nullptr) {
-        logLine("ERROR: launcher patch API unavailable for BadPacket disconnect correlation");
+        logLine("ERROR: launcher patch API unavailable for disconnect diagnostics");
         return false;
     }
 
@@ -978,7 +1024,7 @@ bool installBadPacketDisconnectHooks(const MinecraftImage& image) {
         return false;
     }
 
-    logLine("installed BadPacket disconnect correlation hooks");
+    logLine("installed all-reason disconnect diagnostic hooks");
     return true;
 }
 
@@ -1000,7 +1046,7 @@ void installPacketHooks() {
     const bool streamProbe = byteTraceProbe || packetEndProbe;
     const bool packetReadResult = installPacketReadResultHook(image);
     const bool universalValidation = installUniversalValidationHook(image);
-    const bool disconnectCorrelation = installBadPacketDisconnectHooks(image);
+    const bool disconnectCorrelation = installDisconnectDiagnosticHooks(image);
     const bool directViolationHook = installDirectViolationHook(image);
     const bool warningHook = installViolationHook(image);
     if (!packetReadResult && !universalValidation && !disconnectCorrelation &&

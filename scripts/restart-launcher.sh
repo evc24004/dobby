@@ -8,7 +8,8 @@ protocol_path="$HOME/Library/Application Support/mcpelauncher/protocol.json"
 observed_protocol_path="$HOME/Library/Application Support/mcpelauncher/protocol-observed.json"
 version_path="$HOME/Library/Application Support/mcpelauncher/version.json"
 protocol_status_path="$HOME/Library/Application Support/mcpelauncher/protocol-dump-status.json"
-client_pattern='^/Applications/Minecraft Bedrock Launcher.app/Contents/MacOS/(\./)?mcpelauncher-client-arm64-v8a '
+client_pattern='^/Applications/Minecraft Bedrock Launcher.app/Contents/MacOS/(\./)?mcpelauncher-client(-arm64-v8a)? '
+ui_pattern='^/Applications/Minecraft Bedrock Launcher.app/Contents/MacOS/mcpelauncher-ui-qt( |$)'
 before_lines=0
 [ ! -f "$log_path" ] || before_lines=$(wc -l < "$log_path" | tr -d ' ')
 
@@ -16,6 +17,16 @@ profile=${DOBBY_LAUNCHER_PROFILE:-}
 
 live_client_pid() {
     pgrep -f "$client_pattern" 2>/dev/null | while IFS= read -r pid; do
+        state=$(ps -p "$pid" -o state= 2>/dev/null | tr -d ' ')
+        case "$state" in
+            ''|Z*) ;;
+            *) printf '%s\n' "$pid"; return 0 ;;
+        esac
+    done
+}
+
+live_launcher_pid() {
+    pgrep -f "$ui_pattern" 2>/dev/null | while IFS= read -r pid; do
         state=$(ps -p "$pid" -o state= 2>/dev/null | tr -d ' ')
         case "$state" in
             ''|Z*) ;;
@@ -38,13 +49,19 @@ fi
 
 osascript -e "tell application id \"$bundle_id\" to quit" >/dev/null 2>&1 || true
 pkill -TERM -f "$client_pattern" 2>/dev/null || true
+pkill -TERM -f "$ui_pattern" 2>/dev/null || true
 attempt=0
-while [ -n "$(live_client_pid)" ] && [ "$attempt" -lt 10 ]; do
+while { [ -n "$(live_client_pid)" ] || [ -n "$(live_launcher_pid)" ]; } &&
+        [ "$attempt" -lt 10 ]; do
     sleep 1
     attempt=$((attempt + 1))
 done
 if [ -n "$(live_client_pid)" ]; then
     echo "error: existing Minecraft client did not stop cleanly" >&2
+    exit 1
+fi
+if [ -n "$(live_launcher_pid)" ]; then
+    echo "error: stale launcher process did not stop cleanly" >&2
     exit 1
 fi
 
@@ -57,7 +74,8 @@ while [ "$attempt" -lt 45 ]; do
     if [ -f "$log_path" ]; then
         new_log=$(tail -n "+$((before_lines + 1))" "$log_path")
         if printf '%s\n' "$new_log" | grep -q 'READY: Dobby' &&
-                printf '%s\n' "$new_log" | grep -q 'protocol startup dump complete:'; then
+                (printf '%s\n' "$new_log" | grep -q 'protocol startup dump complete:' ||
+                 printf '%s\n' "$new_log" | grep -q 'protocol dump: disabled;'); then
             client_pid=$(live_client_pid)
             [ -n "$client_pid" ] || {
                 echo "error: Dobby reported READY but the Minecraft client already exited" >&2
@@ -73,6 +91,7 @@ while [ "$attempt" -lt 45 ]; do
                 sleep 1
                 stable=$((stable + 1))
             done
+            if printf '%s\n' "$new_log" | grep -q 'protocol startup dump complete:'; then
             python3 - "$protocol_path" "$observed_protocol_path" "$version_path" "$protocol_status_path" <<'PY'
 import hashlib
 import json
@@ -114,6 +133,9 @@ print(
     f"name_divergences={len(status.get('runtime_name_divergences', []))}"
 )
 PY
+            else
+                echo "Protocol startup dump validation skipped: target-specific factory/schema mapping is disabled."
+            fi
             printf '%s\n' "$new_log" | grep -E \
                 'library loaded: Dobby|installed ReadOnlyBinaryStream|installed PacketViolationWarningPacket|protocol startup dump complete|READY: Dobby|registered Mods > Dobby'
             echo "Minecraft client $client_pid remained stable for 10 seconds after READY."

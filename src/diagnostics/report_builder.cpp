@@ -258,7 +258,94 @@ std::string buildValidationReport(const ValidationEvidence& evidence) {
     return output.str();
 }
 
+std::string buildDisconnectJson(const Diagnostic& diagnostic) {
+    const auto& evidence = *diagnostic.disconnect;
+    std::string json =
+            std::string("{\"tool\":\"dobby\",\"tool_version\":\"") + kDobbyVersion +
+            "\",\"event\":\"client_disconnect\",\"captured_at\":\"" +
+            jsonEscape(diagnostic.capturedAt) +
+            "\",\"direction\":\"server_to_client\",\"intercept\":\"" +
+            jsonEscape(diagnostic.intercept) +
+            "\",\"disconnect_reason\":" + std::to_string(evidence.reason) +
+            ",\"disconnect_reason_name\":\"" + jsonEscape(evidence.reasonName) +
+            "\",\"codeword\":\"" + jsonEscape(evidence.codeword) +
+            "\",\"disconnect_stage\":" + std::to_string(evidence.stage) +
+            ",\"skip_message\":" + (evidence.skipMessage ? "true" : "false") +
+            ",\"source_present\":" + (evidence.sourcePresent ? "true" : "false") +
+            ",\"telemetry_override_present\":" +
+            (evidence.telemetryOverridePresent ? "true" : "false") +
+            ",\"message_from_server\":\"" + jsonEscape(evidence.messageFromServer) +
+            "\",\"message_body_override\":\"" +
+            jsonEscape(evidence.messageBodyOverride) +
+            "\",\"message_from_server_storage\":\"" +
+            jsonEscape(evidence.messageFromServerStorage) +
+            "\",\"message_body_override_storage\":\"" +
+            jsonEscape(evidence.messageBodyOverrideStorage) +
+            "\",\"latest_packet_id\":" + std::to_string(diagnostic.packetId) +
+            ",\"latest_packet_name\":\"" +
+            jsonEscape(packetNameString(diagnostic.packetId)) +
+            "\",\"native_stack\":[";
+    for (std::size_t index = 0; index < evidence.nativeStackImageOffsets.size(); ++index) {
+        if (index != 0)
+            json += ',';
+        json += "{\"image_offset\":\"" +
+                imageOffsetHex(evidence.nativeStackImageOffsets[index]) + "\"}";
+    }
+    json += "],\"recent_packets\":[";
+    for (std::size_t index = 0; index < evidence.recentPackets.size(); ++index) {
+        if (index != 0)
+            json += ',';
+        const auto& packet = evidence.recentPackets[index];
+        json += std::string("{\"packet_id\":") + std::to_string(packet.packetId) +
+                ",\"packet_name\":\"" + jsonEscape(packetNameString(packet.packetId)) +
+                "\",\"packet_size\":" + std::to_string(packet.packetSize) +
+                ",\"age_ms\":" + std::to_string(packet.ageMilliseconds) + "}";
+    }
+    json += std::string("],\"minecraft_version\":\"") + kMinecraftVersion +
+            "\",\"libminecraftpe_build_id\":\"" + kMinecraftBuildId + "\"}";
+    return json;
+}
+
+std::string buildDisconnectReport(const Diagnostic& diagnostic) {
+    const auto& evidence = *diagnostic.disconnect;
+    std::ostringstream output;
+    output << "DOBBY DISCONNECT DIAGNOSTIC\n"
+           << diagnostic.capturedAt << " | client disconnect callback\n\n"
+           << evidence.reasonName << " (" << evidence.reason << ") / "
+           << evidence.codeword << '\n'
+           << "Disconnect stage: " << evidence.stage << '\n'
+           << "Skip message: " << (evidence.skipMessage ? "yes" : "no") << '\n'
+           << "Source present: " << (evidence.sourcePresent ? "yes" : "no") << '\n'
+           << "Telemetry override present: "
+           << (evidence.telemetryOverridePresent ? "yes" : "no") << '\n';
+    if (!evidence.messageFromServer.empty())
+        output << "Message from server: " << evidence.messageFromServer << '\n';
+    if (!evidence.messageBodyOverride.empty())
+        output << "Message body override: " << evidence.messageBodyOverride << '\n';
+    if (!evidence.recentPackets.empty()) {
+        output << "\nRecent inbound packets (oldest -> newest):\n";
+        for (const auto& packet : evidence.recentPackets) {
+            output << "- " << packetNameString(packet.packetId) << " ("
+                   << packet.packetId << " / " << packetIdHex(packet.packetId)
+                   << ") size " << packet.packetSize << " age "
+                   << packet.ageMilliseconds << "ms\n";
+        }
+    } else {
+        output << "\nRecent inbound packets: unavailable\n";
+    }
+    if (!evidence.nativeStackImageOffsets.empty()) {
+        output << "\nNative stack (libminecraftpe image offsets):\n";
+        for (const auto offset : evidence.nativeStackImageOffsets)
+            output << "- libminecraftpe+" << imageOffsetHex(offset) << '\n';
+    }
+    output << "\nDobby " << kDobbyVersion << " | Minecraft "
+           << kMinecraftVersion << " | " << kAbi << '\n';
+    return output.str();
+}
+
 std::string buildJson(const Diagnostic& diagnostic) {
+    if (diagnostic.kind == DiagnosticKind::disconnect && diagnostic.disconnect)
+        return buildDisconnectJson(diagnostic);
     std::string json =
             std::string("{\"tool\":\"dobby\",\"tool_version\":\"") + kDobbyVersion +
             "\",\"event\":\"packet_violation\",\"captured_at\":\"" +
@@ -386,6 +473,51 @@ std::string buildJson(const Diagnostic& diagnostic) {
         json += ",\"decode_failure\":null";
     }
 
+    if (diagnostic.disconnect) {
+        const auto& evidence = *diagnostic.disconnect;
+        json += std::string(",\"disconnect\":{\"reason\":") +
+                std::to_string(evidence.reason) +
+                ",\"reason_name\":\"" + jsonEscape(evidence.reasonName) +
+                "\",\"codeword\":\"" + jsonEscape(evidence.codeword) +
+                "\",\"stage\":" + std::to_string(evidence.stage) +
+                ",\"skip_message\":" +
+                (evidence.skipMessage ? "true" : "false") +
+                ",\"source_present\":" +
+                (evidence.sourcePresent ? "true" : "false") +
+                ",\"telemetry_override_present\":" +
+                (evidence.telemetryOverridePresent ? "true" : "false") +
+                ",\"message_from_server\":\"" +
+                jsonEscape(evidence.messageFromServer) +
+                "\",\"message_body_override\":\"" +
+                jsonEscape(evidence.messageBodyOverride) +
+                "\",\"native_stack\":[";
+        for (std::size_t index = 0;
+             index < evidence.nativeStackImageOffsets.size(); ++index) {
+            if (index != 0)
+                json += ',';
+            json += "{\"image_offset\":\"" +
+                    imageOffsetHex(evidence.nativeStackImageOffsets[index]) +
+                    "\"}";
+        }
+        json += "],\"recent_packets\":[";
+        for (std::size_t index = 0; index < evidence.recentPackets.size(); ++index) {
+            if (index != 0)
+                json += ',';
+            const auto& packet = evidence.recentPackets[index];
+            json += std::string("{\"packet_id\":") +
+                    std::to_string(packet.packetId) +
+                    ",\"packet_name\":\"" +
+                    jsonEscape(packetNameString(packet.packetId)) +
+                    "\",\"packet_size\":" +
+                    std::to_string(packet.packetSize) +
+                    ",\"age_ms\":" +
+                    std::to_string(packet.ageMilliseconds) + "}";
+        }
+        json += "]}";
+    } else {
+        json += ",\"disconnect\":null";
+    }
+
     json +=
             std::string(",\"minecraft_version\":\"") + kMinecraftVersion +
             "\",\"libminecraftpe_build_id\":\"" + kMinecraftBuildId + "\"}";
@@ -393,6 +525,8 @@ std::string buildJson(const Diagnostic& diagnostic) {
 }
 
 std::string buildReport(const Diagnostic& diagnostic) {
+    if (diagnostic.kind == DiagnosticKind::disconnect && diagnostic.disconnect)
+        return buildDisconnectReport(diagnostic);
     std::string report =
             "DOBBY PACKET DIAGNOSTIC\n"
             + diagnostic.capturedAt + " | server -> client\n\n"
@@ -401,6 +535,23 @@ std::string buildReport(const Diagnostic& diagnostic) {
             packetIdHex(diagnostic.packetId) + ")\n" +
             violationTypeName(diagnostic.type) + " / " + severityName(diagnostic.severity) +
             "\n" + diagnostic.context + "\n\n";
+
+    if (diagnostic.disconnect) {
+        const auto& evidence = *diagnostic.disconnect;
+        report += "Disconnect callback: " + evidence.reasonName + " (" +
+                std::to_string(evidence.reason) + ") / " + evidence.codeword +
+                "\nDisconnect stage: " + std::to_string(evidence.stage) +
+                " | skip message " + (evidence.skipMessage ? "yes" : "no") +
+                " | source " + (evidence.sourcePresent ? "present" : "absent") +
+                " | telemetry override " +
+                (evidence.telemetryOverridePresent ? "present" : "absent") + "\n";
+        if (!evidence.messageFromServer.empty())
+            report += "Message from server: " + evidence.messageFromServer + "\n";
+        if (!evidence.messageBodyOverride.empty())
+            report += "Message body override: " +
+                    evidence.messageBodyOverride + "\n";
+        report += "\n";
+    }
 
     if (diagnostic.validation)
         report += buildValidationReport(*diagnostic.validation);
@@ -479,7 +630,8 @@ std::string packetIdHex(std::int32_t packetId) {
 
 Diagnostic buildDiagnostic(
         const ViolationRecord& record, std::optional<StreamFailure> streamFailure,
-        std::string intercept, std::optional<ValidationEvidence> validation) {
+        std::string intercept, std::optional<ValidationEvidence> validation,
+        std::optional<DisconnectEvidence> disconnect) {
     Diagnostic result;
     result.capturedAt = timestamp();
     result.type = record.type;
@@ -490,6 +642,26 @@ Diagnostic buildDiagnostic(
     result.intercept = std::move(intercept);
     result.streamFailure = std::move(streamFailure);
     result.validation = std::move(validation);
+    result.disconnect = std::move(disconnect);
+    result.json = buildJson(result);
+    result.report = buildReport(result);
+    return result;
+}
+
+Diagnostic buildDisconnectDiagnostic(
+        DisconnectEvidence evidence, std::string intercept) {
+    Diagnostic result;
+    result.kind = DiagnosticKind::disconnect;
+    result.capturedAt = timestamp();
+    result.type = -1;
+    result.severity = 2;
+    result.packetId = evidence.recentPackets.empty()
+            ? -1 : evidence.recentPackets.back().packetId;
+    result.context = "DisconnectFailReason::" + evidence.reasonName + " (" +
+            std::to_string(evidence.reason) + ")\ncodeword=" + evidence.codeword;
+    result.contextStorage = "disconnect_callback";
+    result.intercept = std::move(intercept);
+    result.disconnect = std::move(evidence);
     result.json = buildJson(result);
     result.report = buildReport(result);
     return result;

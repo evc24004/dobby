@@ -23,9 +23,12 @@ Menu toggles are saved locally and restored on the next launch.
 
 ## Startup protocol dump
 
-Every supported launch sweeps the client packet factory and passively traces each safe default packet into an isolated `BinaryStream`; none of those bytes are sent. Dobby writes the resulting direct evidence to `protocol-observed.json`.
+On targets with a validated packet factory, Dobby sweeps the client packet
+factory and passively traces each safe default packet into an isolated
+`BinaryStream`; none of those bytes are sent. The 1.26.51.1 release keeps this
+optional dump disabled until its factory and schema-writer vtables are mapped.
 
-Default values cannot prove empty collection element types or untaken conditional branches, so Dobby also embeds the exact PrismarineJS Bedrock `1.26.40` baseline from commit `8a80816cbfb3fe2b609f2cde4e57796c8033af61`. Startup verifies its size and hash before atomically writing the pinned baseline files `protocol.json` and `version.json`; the direct `1.26.45` runtime evidence remains separate in `protocol-observed.json`. `protocol-dump-status.json` records reference-only IDs, runtime-name divergences, serialization failures, field traces, source commit, and hashes. A failed target or reference check produces no claimed verified baseline.
+Default values cannot prove empty collection element types or untaken conditional branches, so Dobby also embeds the exact PrismarineJS Bedrock `1.26.40` baseline from commit `8a80816cbfb3fe2b609f2cde4e57796c8033af61`. Startup verifies its size and hash before atomically writing the pinned baseline files `protocol.json` and `version.json`; direct runtime evidence remains separate in `protocol-observed.json`. `protocol-dump-status.json` records reference-only IDs, runtime-name divergences, serialization failures, field traces, source commit, and hashes. A failed target or reference check produces no claimed verified baseline.
 
 ## In-game packet validation evidence
 
@@ -43,6 +46,16 @@ The downstream `ClientNetworkHandler::handlePacketViolation` entry,
 captures its own `std::error_code` when no upstream result was observed. For
 terminating errors, Dobby opens its diagnostic after Minecraft creates the generic
 `ClientDisconnection-90` / `Block` screen so its popup stays visible.
+Popup requests are queued onto the launcher's render/UI thread, so a packet
+worker callback cannot silently lose the window.
+
+The same `onDisconnect` hook now records every disconnect reason. Non-packet
+reasons become `client_disconnect` events; `BadPacket` keeps its richer packet
+report and gains the same callback evidence. Reports preserve the exact numeric
+reason and stage, the 1.26.51.1 enum name and shipped UI codeword (for example,
+`Disconnected (41) / Bat`), bounded server/body strings, callback flags, the
+last 32 inbound packet IDs/sizes/ages, and an image-relative native stack. This
+path is passive and does not suppress, rewrite, or retry the disconnect.
 
 The latest paste-ready report is `latest-dobby-violation.txt`; the complete
 machine-readable snapshot for AI analysis is `latest-dobby-ai.json`, and the
@@ -60,19 +73,21 @@ traffic overlays can remain disabled without disabling packet diagnostics.
 
 ## Target
 
-- Dobby `2.13.0`
-- Minecraft Android `1.26.45.1` (the `26.45` hotfix)
+- Dobby `2.15.0`
+- Minecraft Android `1.26.51.1`
 - `arm64-v8a`
-- network protocol `2169`
-- `libminecraftpe.so` build ID `868e275cb295e9a275bb29d2258edc2f7dc48761`
+- network protocol `2193`
+- Android version code `972605101`
+- `libminecraftpe.so` build ID `712509dc14ccc233e91f267937dfb46ecdcc4b68`
 
 The mod validates the target signature and refuses to patch incompatible builds.
 
-On macOS, Minecraft `1.26.45.1` currently needs the launcher compatibility
-module from `mcpelauncher-updates/1.26.45.1/arm64-v8a` loaded alongside Dobby.
-The verified runtime combination reaches `READY: Dobby 2.13.0 developer
-diagnostics active` and initializes the protocol, packet, metrics, chunk, ESP,
-and developer UI hooks.
+On macOS, use the launcher’s Android/arm64 profile for this build. The
+1.26.51.1 port initializes the validated packet diagnostics, schema tracing,
+render, entity, network, outbound, packet-traffic, and loaded-chunk lifecycle
+hooks. Protocol discovery, chest ESP, ore ESP, and the packet-rate/pending-chunk
+paths remain fail-closed until their target-specific layouts and dispatch
+targets are proven for this binary.
 
 ## Build
 

@@ -18,6 +18,7 @@
 #include "platform/preferences_store.hpp"
 
 #include <array>
+#include <atomic>
 #include <string>
 
 namespace dobby {
@@ -25,6 +26,8 @@ namespace {
 
 constexpr char kViolationWindowTitle[] = "Dobby##dobby_violation_v3";
 constexpr char kStatusWindowTitle[] = "Dobby##dobby_status_v2";
+
+std::atomic_bool pendingViolationPopup{false};
 
 bool menuUnselected(void*) { return false; }
 bool autoPopupSelected(void*) { return runtimeState().autoPopup(); }
@@ -178,6 +181,40 @@ void showLatestViolation(void*) {
         return;
     }
 
+    if (diagnostic->kind == DiagnosticKind::disconnect && diagnostic->disconnect) {
+        const auto& disconnect = *diagnostic->disconnect;
+        const std::string reason =
+                disconnect.reasonName + " (" + std::to_string(disconnect.reason) +
+                ") / " + disconnect.codeword;
+        const std::string stage =
+                "Disconnect stage: " + std::to_string(disconnect.stage) +
+                "  |  skip message: " + (disconnect.skipMessage ? "yes" : "no");
+        std::string context;
+        if (!disconnect.messageFromServer.empty())
+            context += "Server: " + disconnect.messageFromServer + "\n";
+        if (!disconnect.messageBodyOverride.empty())
+            context += "Body: " + disconnect.messageBodyOverride + "\n";
+        if (!disconnect.recentPackets.empty()) {
+            const auto& latest = disconnect.recentPackets.back();
+            context += "Latest inbound: " + std::string(packetName(latest.packetId)) +
+                    " (" + std::to_string(latest.packetId) + ") size " +
+                    std::to_string(latest.packetSize) + " age " +
+                    std::to_string(latest.ageMilliseconds) + "ms";
+        }
+        if (context.empty())
+            context = "No server message or recent inbound packet was available.";
+        std::array<LauncherControl, 4> controls{
+                textControl(reason.c_str(), 2),
+                textControl(stage.c_str(), 1),
+                textControl(context.c_str(), 1),
+                buttonControl("Copy report", copyLatestReport),
+        };
+        showLauncherWindow(kViolationWindowTitle, controls, windowClosed);
+        applyDobbyWindowPolicy(kViolationWindowTitle);
+        logLine("UI: displayed disconnect diagnostic window");
+        return;
+    }
+
     const std::string packet =
             std::string(packetName(diagnostic->packetId)) + " (" +
             std::to_string(diagnostic->packetId) + " / " + packetIdHex(diagnostic->packetId) + ")";
@@ -198,6 +235,17 @@ void showLatestViolation(void*) {
     showLauncherWindow(kViolationWindowTitle, controls, windowClosed);
     applyDobbyWindowPolicy(kViolationWindowTitle);
     logLine("UI: displayed packet violation window");
+}
+
+void requestLatestViolationPopup() {
+    pendingViolationPopup.store(true, std::memory_order_release);
+}
+
+void showPendingViolationPopup() {
+    if (!pendingViolationPopup.exchange(false, std::memory_order_acq_rel))
+        return;
+    if (runtimeState().autoPopup())
+        showLatestViolation();
 }
 
 void registerDeveloperUi() {

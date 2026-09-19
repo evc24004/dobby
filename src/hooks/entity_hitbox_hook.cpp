@@ -176,8 +176,7 @@ std::span<const EntityHitboxObservation> captureRuntimeEntities(
 
 extern "C" void dobby_capture_entity_hitbox(
         const void* renderContext, const void* actor) {
-    if (!runtimeState().anyEspEnabled() || renderContext == nullptr ||
-        actor == nullptr) {
+    if (renderContext == nullptr || actor == nullptr) {
         return;
     }
 
@@ -185,6 +184,8 @@ extern "C" void dobby_capture_entity_hitbox(
             actor, target::kActorLevelOffset);
     if (runtimeState().networkMetricsOverlay())
         observeClientLevelForMetrics(level);
+    if (!runtimeState().anyEspEnabled())
+        return;
     const std::uint64_t presentation = entityHitboxPresentationFrame();
     if (lastBatchCaptureFrame.load(std::memory_order_acquire) == presentation)
         return;

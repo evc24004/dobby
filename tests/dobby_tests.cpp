@@ -3,6 +3,7 @@
 #include "core/preferences.hpp"
 #include "core/runtime_state.hpp"
 #include "diagnostics/client_schema_trace.hpp"
+#include "diagnostics/disconnect_decoder.hpp"
 #include "diagnostics/protocol_dump.hpp"
 #include "diagnostics/report_builder.hpp"
 #include "diagnostics/stream_probe.hpp"
@@ -55,28 +56,28 @@ void store(std::byte* destination, T value) {
 void testViolationDecoder() {
     static_assert(
             dobby::target::kPacketSecurityCheckForViolationOffset ==
-            0x0c2a4c8c);
+            0x0c64d5ec);
     static_assert(
             dobby::target::kPacketSecurityCheckForViolationVtableSlotOffset ==
-            0x120a7948);
+            0x12e26758);
     static_assert(
             dobby::target::kPacketSecurityCheckForViolationSignature[0] == 0xfd);
-    static_assert(dobby::target::kPacketReadOffset == 0x0c2a3304);
+    static_assert(dobby::target::kPacketReadOffset == 0x0c64bc64);
     static_assert(
             dobby::target::kPacketReadVerificationVtableSlotOffset ==
-            0x12102098);
+            0x12e7f3c8);
     static_assert(dobby::target::kPacketReadSignature[0] == 0xff);
-    static_assert(dobby::target::kHandlePacketViolationOffset == 0x09add934);
+    static_assert(dobby::target::kHandlePacketViolationOffset == 0x09ecab14);
     static_assert(
             dobby::target::kHandlePacketViolationVtableSlotOffset ==
-            0x11f91410);
+            0x12d24c50);
     static_assert(dobby::target::kHandlePacketViolationSignature[0] == 0xfd);
-    static_assert(dobby::target::kOnDisconnectOffset == 0x09adca1c);
-    static_assert(dobby::target::kOnDisconnectVtableSlotOffset == 0x11f913f0);
-    static_assert(dobby::target::kAllowIncomingPacketIdOffset == 0x09add910);
+    static_assert(dobby::target::kOnDisconnectOffset == 0x09ec9bfc);
+    static_assert(dobby::target::kOnDisconnectVtableSlotOffset == 0x12d24c30);
+    static_assert(dobby::target::kAllowIncomingPacketIdOffset == 0x09ecaaf0);
     static_assert(
             dobby::target::kAllowIncomingPacketIdVtableSlotOffset ==
-            0x11f913f8);
+            0x12d24c38);
     std::array<std::byte, 0x80> packet{};
     store<std::int32_t>(packet.data() + dobby::kViolationTypeOffset, 0);
     store<std::int32_t>(packet.data() + dobby::kViolationSeverityOffset, 2);
@@ -129,6 +130,100 @@ void testViolationDecoder() {
                    "DisconnectFailReason::BadPacket (90)") != std::string::npos);
     assert(disconnectRecord->context.find("packet_size=73669") != std::string::npos);
     assert(disconnectRecord->contextStorage == "disconnect_callback");
+}
+
+void testDisconnectDecoderAndReport() {
+    require(dobby::disconnectReasonName(41) == "Disconnected");
+    require(dobby::disconnectCodeword(41) == "Bat");
+    require(dobby::disconnectReasonName(90) == "BadPacket");
+    require(dobby::disconnectCodeword(90) == "Block");
+    require(dobby::disconnectReasonName(149) == "UnsupportedTransport");
+    require(dobby::disconnectReasonName(150) == "Unrecognized");
+    require(dobby::disconnectCodeword(150) == "Terracotta");
+
+    const std::string shortMessage = "lost host";
+    std::array<std::byte, 24> shortAndroidString{};
+    shortAndroidString[0] =
+            static_cast<std::byte>(shortMessage.size() << 1U);
+    std::memcpy(
+            shortAndroidString.data() + 1,
+            shortMessage.data(), shortMessage.size());
+
+    const std::string longMessage(80, 'd');
+    std::array<std::byte, 24> longAndroidString{};
+    longAndroidString[0] = std::byte{1};
+    store<std::size_t>(longAndroidString.data() + 8, longMessage.size());
+    store<const char*>(longAndroidString.data() + 16, longMessage.data());
+
+    auto evidence = dobby::decodeDisconnectArguments(
+            41, 3, shortAndroidString.data(), longAndroidString.data(),
+            false, true, true);
+    require(evidence.has_value());
+    require(evidence->reason == 41);
+    require(evidence->reasonName == "Disconnected");
+    require(evidence->codeword == "Bat");
+    require(evidence->stage == 3);
+    require(evidence->messageFromServer == shortMessage);
+    require(evidence->messageBodyOverride == longMessage);
+    require(evidence->messageFromServerStorage == "short");
+    require(evidence->messageBodyOverrideStorage == "long");
+    require(evidence->sourcePresent);
+    require(evidence->telemetryOverridePresent);
+    evidence->nativeStackImageOffsets = {0x1234, 0x5678};
+    evidence->recentPackets = {{19, 31, 7}, {63, 73669, 1}};
+
+    const auto diagnostic = dobby::buildDisconnectDiagnostic(
+            std::move(*evidence), "unit test disconnect");
+    require(diagnostic.kind == dobby::DiagnosticKind::disconnect);
+    require(diagnostic.packetId == 63);
+    require(diagnostic.report.find("DOBBY DISCONNECT DIAGNOSTIC") !=
+            std::string::npos);
+    require(diagnostic.report.find("Disconnected (41) / Bat") !=
+            std::string::npos);
+    require(diagnostic.report.find("Disconnect stage: 3") !=
+            std::string::npos);
+    require(diagnostic.report.find("MovePlayer (19 / 0x13) size 31") !=
+            std::string::npos);
+    require(diagnostic.report.find("libminecraftpe+0x1234") !=
+            std::string::npos);
+    require(diagnostic.json.find("\"event\":\"client_disconnect\"") !=
+            std::string::npos);
+    require(diagnostic.json.find("\"disconnect_reason\":41") !=
+            std::string::npos);
+    require(diagnostic.json.find("\"disconnect_reason_name\":\"Disconnected\"") !=
+            std::string::npos);
+    require(diagnostic.json.find("\"codeword\":\"Bat\"") !=
+            std::string::npos);
+    require(diagnostic.json.find("\"latest_packet_id\":63") !=
+            std::string::npos);
+
+    dobby::DisconnectEvidence badPacketEvidence;
+    badPacketEvidence.reason = 90;
+    badPacketEvidence.reasonName = "BadPacket";
+    badPacketEvidence.codeword = "Block";
+    badPacketEvidence.stage = 2;
+    badPacketEvidence.recentPackets = {{19, 31, 0}};
+    const auto badPacketDiagnostic = dobby::buildDiagnostic(
+            {-1, 2, 19, "DisconnectFailReason::BadPacket (90)",
+             "disconnect_callback"},
+            std::nullopt, "unit test bad packet", std::nullopt,
+            badPacketEvidence);
+    require(badPacketDiagnostic.json.find(
+                    "\"event\":\"packet_violation\"") != std::string::npos);
+    require(badPacketDiagnostic.json.find(
+                    "\"disconnect\":{\"reason\":90") != std::string::npos);
+    require(badPacketDiagnostic.json.find(
+                    "\"codeword\":\"Block\"") != std::string::npos);
+    require(badPacketDiagnostic.report.find(
+                    "Disconnect callback: BadPacket (90) / Block") !=
+            std::string::npos);
+
+    const auto empty = dobby::decodeDisconnectArguments(
+            32, 0, nullptr, nullptr, true, false, false);
+    require(empty.has_value());
+    require(empty->reasonName == "Timeout");
+    require(empty->codeword == "Kelp");
+    require(empty->messageFromServer.empty());
 }
 
 void testUniversalValidationDecoder() {
@@ -345,7 +440,7 @@ void testProtocolDumpCompilation() {
             "clientbound_data_driven_ui_show_screen");
 
     dobby::ProtocolDumpObservation dump{
-            "1.26.45.1", "test-build", 2169, 351,
+            "1.26.51.1", "test-build", 2193, 351,
             {
                     {10,
                      "SetTimePacket",
@@ -382,8 +477,8 @@ void testProtocolDumpCompilation() {
             std::string::npos);
 
     const auto version = dobby::buildProtocolVersionJson(dump);
-    require(version.find("\"version\": 2169") != std::string::npos);
-    require(version.find("\"minecraftVersion\": \"1.26.45\"") !=
+    require(version.find("\"version\": 2193") != std::string::npos);
+    require(version.find("\"minecraftVersion\": \"1.26.51\"") !=
             std::string::npos);
     require(version.find("\"majorVersion\": \"1.26\"") !=
             std::string::npos);
@@ -470,36 +565,36 @@ void testEntityHitboxState() {
 
 void testEntityProjection() {
     static_assert(sizeof(dobby::EntityAabb) == 24);
-    static_assert(dobby::target::kActorGetAabbOffset == 0x0ec8c87c);
+    static_assert(dobby::target::kActorGetAabbOffset == 0x0f5686c4);
     static_assert(dobby::target::kActorGetAabbSignature[1] == 0x08);
     static_assert(dobby::target::kCameraProjectionStackOffset == 0x90);
     static_assert(dobby::target::kCameraRightOffset == 0x118);
     static_assert(dobby::target::kCameraPositionOffset == 0x13c);
-    static_assert(dobby::target::kViewMatrixGetterOffset == 0x0a5d9dc4);
-    static_assert(dobby::target::kCameraPositionGetterOffset == 0x0a5d9d90);
+    static_assert(dobby::target::kViewMatrixGetterOffset == 0x0a965d40);
+    static_assert(dobby::target::kCameraPositionGetterOffset == 0x0a965d0c);
     static_assert(dobby::target::kActorLevelOffset == 0x1d0);
-    static_assert(dobby::target::kActorGetLevelOffset == 0x0ecad1e8);
+    static_assert(dobby::target::kActorGetLevelOffset == 0x0f58a1b4);
     static_assert(
-            dobby::target::kLevelRenderFrameOffset == 0x0ae0c090);
+            dobby::target::kLevelRenderFrameOffset == 0x0b29b1b4);
     static_assert(
             dobby::target::kLevelRenderFrameVtableSlotOffset ==
-            0x11fc9378);
+            0x12d5d440);
     static_assert(
             dobby::target::kLevelRenderFrameSignature[0] == 0xff);
     static_assert(
             dobby::target::kLevelRendererPlayerVtableOffset ==
-            0x11fc92b8);
+            0x12d5d380);
     static_assert(
             dobby::target::kLevelRenderCameraPointerOffset == 0x18);
     static_assert(
             dobby::target::kLevelRenderCameraPointerProbeOffset ==
-            0x0ae1b6a4);
+            0x0b288a18);
     static_assert(
             dobby::target::kLevelRenderCameraPointerProbeSignature[0] ==
             0xc0);
     static_assert(
             dobby::target::kLevelRenderCameraCaptureOffset ==
-            0x0ae1b6ac);
+            0x0b288a20);
     static_assert(
             dobby::target::kLevelRenderCameraCaptureSignature[0] ==
             0x68);
@@ -507,20 +602,20 @@ void testEntityProjection() {
             dobby::target::kLevelRendererCameraPositionOffset == 0x6f4);
     static_assert(
             dobby::target::kLevelRendererCameraPositionUseProbeOffset ==
-            0x0ae0c218);
+            0x0b29b2b0);
     static_assert(
             dobby::target::kLevelRendererCameraPositionUseProbeSignature[0] ==
             0x01);
     static_assert(dobby::target::kLevelRendererLevelOffset == 0x958);
     static_assert(
             dobby::target::kLevelRendererLevelLayoutProbeOffset ==
-            0x0ae24a34);
+            0x0b27b144);
     static_assert(
             dobby::target::kLevelRendererLevelLayoutProbeSignature[0] ==
             0x76);
     static_assert(
             dobby::target::kLevelRendererLevelUseProbeOffset ==
-            0x0ae2514c);
+            0x0b292d84);
     static_assert(
             dobby::target::kLevelRendererLevelUseProbeSignature[0] ==
             0x60);
@@ -531,13 +626,13 @@ void testEntityProjection() {
             dobby::renderCameraCaptureFailureName(
                     dobby::RenderCameraCaptureFailure::cameraPositionUnavailable) ==
             "camera_position");
-    static_assert(dobby::target::kLevelGetRuntimeActorListOffset == 0x0f22c71c);
+    static_assert(dobby::target::kLevelGetRuntimeActorListOffset == 0x0fb3a22c);
     static_assert(dobby::target::kLevelGetRuntimeActorListVtableSlot == 326);
-    static_assert(dobby::target::kLevelForEachPlayerOffset == 0x0f22b858);
+    static_assert(dobby::target::kLevelForEachPlayerOffset == 0x0fb39368);
     static_assert(dobby::target::kLevelForEachPlayerVtableSlot == 223);
-    static_assert(dobby::target::kLevelGetPrimaryLocalPlayerOffset == 0x0f22b224);
+    static_assert(dobby::target::kLevelGetPrimaryLocalPlayerOffset == 0x0fb38d34);
     static_assert(dobby::target::kLevelGetPrimaryLocalPlayerVtableSlot == 77);
-    static_assert(dobby::target::kClientLevelVtableOffset == 0x11edd910);
+    static_assert(dobby::target::kClientLevelVtableOffset == 0x12c6bc90);
     require(dobby::entityHitboxObservedForPresentation(1, 0));
     require(dobby::entityHitboxObservedForPresentation(8, 0));
     require(!dobby::entityHitboxObservedForPresentation(9, 0));
@@ -759,6 +854,14 @@ void testNetworkMetrics() {
     assert(text.observedTps == "TPS~ 20.0");
     assert(text.chunks == "CHUNKS 2 (2/S)");
     assert(text.pending == "PENDING 7");
+    dobby::NetworkMetricsSnapshot waitingForSamples;
+    waitingForSamples.connected = true;
+    const auto waitingText = dobby::formatNetworkMetrics(waitingForSamples);
+    require(waitingText.visible);
+    require(waitingText.ping == "PING --");
+    require(waitingText.observedTps == "TPS~ --");
+    require(waitingText.chunks == "CHUNKS 0 (0/S)");
+    require(waitingText.pending == "PENDING --");
     metrics.recordChunkUnloaded(0x1000, -2, 7);
     assert(metrics.snapshot(2500).loadedChunks == 1);
 
@@ -801,17 +904,17 @@ void testNetworkMetrics() {
     const auto hidden = dobby::formatNetworkMetrics(metrics.snapshot(9000));
     assert(!hidden.visible);
 
-    static_assert(dobby::target::kLevelGetCurrentServerTickOffset == 0x09ad9938);
+    static_assert(dobby::target::kLevelGetCurrentServerTickOffset == 0x09f127d8);
     static_assert(dobby::target::kLevelGetCurrentServerTickVtableSlot == 81);
-    static_assert(dobby::target::kRakNetPeerUpdateOffset == 0x0c2c1ca0);
+    static_assert(dobby::target::kRakNetPeerUpdateOffset == 0x0c66b484);
     static_assert(dobby::target::kRakNetPeerLastPingOffset == 0x104);
     static_assert(dobby::target::kRakNetPeerAveragePingOffset == 0x108);
-    static_assert(dobby::target::kLevelChunkDispatcherOffset == 0x0c2bcb3c);
-    static_assert(dobby::target::kLevelChunkDispatcherVtableSlotOffset == 0x120aa408);
-    static_assert(dobby::target::kSubChunkDispatcherOffset == 0x0c2bf95c);
-    static_assert(dobby::target::kSubChunkDispatcherVtableSlotOffset == 0x120ae0c8);
-    static_assert(dobby::target::kLoopbackSendOffset == 0x0c2e26fc);
-    static_assert(dobby::target::kLoopbackSendVtableSlotOffset == 0x120b05f0);
+    static_assert(dobby::target::kLevelChunkDispatcherOffset == 0);
+    static_assert(dobby::target::kLevelChunkDispatcherVtableSlotOffset == 0);
+    static_assert(dobby::target::kSubChunkDispatcherOffset == 0);
+    static_assert(dobby::target::kSubChunkDispatcherVtableSlotOffset == 0);
+    static_assert(dobby::target::kLoopbackSendOffset == 0x0c68f9d8);
+    static_assert(dobby::target::kLoopbackSendVtableSlotOffset == 0x12e2f5c0);
     static_assert(dobby::target::kSubChunkRequestVectorBeginOffset == 0x38);
     static_assert(dobby::target::kSubChunkRequestVectorEndOffset == 0x40);
     static_assert(dobby::target::kSubChunkPositionSize == 12);
@@ -931,12 +1034,12 @@ void testPacketTrafficMetrics() {
     traffic.reset();
     require(traffic.snapshot(5000).incomingPackets == 0);
 
-    static_assert(dobby::target::kPacketObserverVtableOffset == 0x120b0190);
-    static_assert(dobby::target::kPacketSentToOffset == 0x0c2a47a0);
-    static_assert(dobby::target::kPacketSentToVtableSlotOffset == 0x120b01a0);
-    static_assert(dobby::target::kPacketReceivedFromOffset == 0x0c2a47e4);
+    static_assert(dobby::target::kPacketObserverVtableOffset == 0);
+    static_assert(dobby::target::kPacketSentToOffset == 0x0c64d100);
+    static_assert(dobby::target::kPacketSentToVtableSlotOffset == 0x12e2f1d8);
+    static_assert(dobby::target::kPacketReceivedFromOffset == 0x0c64d144);
     static_assert(dobby::target::kPacketReceivedFromVtableSlotOffset ==
-                  0x120b01a8);
+                  0x12e2f1e0);
     static_assert(dobby::target::kPacketGetIdVtableSlot == 2);
 }
 
@@ -1338,6 +1441,7 @@ void testDobbyWindowPolicy() {
 
 int main() {
     testViolationDecoder();
+    testDisconnectDecoderAndReport();
     testUniversalValidationDecoder();
     testStreamProbeAndReport();
     testClientSchemaFieldTrace();

@@ -36,6 +36,7 @@ set(DOBBY_COMMON_SOURCES
     src/core/preferences.cpp
     src/core/runtime_state.cpp
     src/diagnostics/client_schema_trace.cpp
+    src/diagnostics/disconnect_decoder.cpp
     src/diagnostics/protocol_dump.cpp
     src/diagnostics/report_builder.cpp
     src/diagnostics/stream_probe.cpp

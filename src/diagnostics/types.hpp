@@ -8,6 +8,11 @@
 
 namespace dobby {
 
+enum class DiagnosticKind {
+    packetViolation,
+    disconnect,
+};
+
 struct ViolationRecord {
     std::int32_t type{};
     std::int32_t severity{};
@@ -72,7 +77,24 @@ struct ValidationEvidence {
     std::vector<PacketHistoryEntry> recentPackets;
 };
 
+struct DisconnectEvidence {
+    std::int32_t reason{};
+    std::string reasonName;
+    std::string codeword;
+    std::int32_t stage{};
+    bool skipMessage{};
+    bool sourcePresent{};
+    bool telemetryOverridePresent{};
+    std::string messageFromServer;
+    std::string messageBodyOverride;
+    std::string messageFromServerStorage;
+    std::string messageBodyOverrideStorage;
+    std::vector<std::uint64_t> nativeStackImageOffsets;
+    std::vector<PacketHistoryEntry> recentPackets;
+};
+
 struct Diagnostic {
+    DiagnosticKind kind{DiagnosticKind::packetViolation};
     std::string capturedAt;
     std::int32_t type{};
     std::int32_t severity{};
@@ -82,6 +104,7 @@ struct Diagnostic {
     std::string intercept;
     std::optional<StreamFailure> streamFailure;
     std::optional<ValidationEvidence> validation;
+    std::optional<DisconnectEvidence> disconnect;
     std::string json;
     std::string report;
 };
