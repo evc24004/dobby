@@ -201,6 +201,15 @@ void showLatestViolation(void*) {
                     std::to_string(transport.messageId) + ") age " +
                     std::to_string(transport.ageMilliseconds) + "ms\n";
         }
+        if (disconnect.rakNetKeepalive) {
+            const auto& keepalive = *disconnect.rakNetKeepalive;
+            context += "RakNet keepalive RX: ping " +
+                    std::to_string(keepalive.connectedPingCount) +
+                    " | pong " +
+                    std::to_string(keepalive.connectedPongCount) +
+                    " | detect " +
+                    std::to_string(keepalive.detectLostConnectionsCount) + "\n";
+        }
         if (!disconnect.recentPackets.empty()) {
             const auto& latest = disconnect.recentPackets.back();
             context += "Latest inbound: " + std::string(packetName(latest.packetId)) +

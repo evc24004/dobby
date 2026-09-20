@@ -189,6 +189,8 @@ void testDisconnectDecoderAndReport() {
                     true, {}};
     evidence->transport = dobby::TransportDisconnectEvidence{
             21, "ID_DISCONNECTION_NOTIFICATION", 1, 0, false, {0x15}};
+    evidence->rakNetKeepalive = dobby::RakNetKeepaliveEvidence{
+            true, 11000, 21, 250, 20, 300, 1, 9000};
     dobby::ContentDownloadStateEvidence downloadState;
     downloadState.decodeComplete = true;
     dobby::ContentDownloadEvidence download;
@@ -223,6 +225,12 @@ void testDisconnectDecoderAndReport() {
                     "Transport event: ID_DISCONNECTION_NOTIFICATION (21)") !=
             std::string::npos);
     require(diagnostic.report.find(
+                    "RakNet keepalive observations (client receive path)") !=
+            std::string::npos);
+    require(diagnostic.report.find(
+                    "ID_CONNECTED_PING (0): count 21 | last age 250ms") !=
+            std::string::npos);
+    require(diagnostic.report.find(
                     "ResourcePackClientResponse (8 / 0x8) age 9ms") !=
             std::string::npos);
     require(diagnostic.report.find(
@@ -245,6 +253,12 @@ void testDisconnectDecoderAndReport() {
             std::string::npos);
     require(diagnostic.json.find(
                     "\"message_name\":\"ID_DISCONNECTION_NOTIFICATION\"") !=
+            std::string::npos);
+    require(diagnostic.json.find(
+                    "\"raknet_keepalive\":{\"session_start_observed\":true") !=
+            std::string::npos);
+    require(diagnostic.json.find(
+                    "\"connected_ping\":{\"count\":21,\"last_age_ms\":250}") !=
             std::string::npos);
     require(diagnostic.json.find(
                     "\"packet_name\":\"ResourcePackClientResponse\"") !=

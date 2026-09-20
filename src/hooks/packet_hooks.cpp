@@ -429,6 +429,19 @@ struct TransportDisconnectObservation {
 
 thread_local TransportDisconnectObservation lastTransportDisconnect;
 
+struct RakNetKeepaliveObservation {
+    bool sessionStartObserved{};
+    std::chrono::steady_clock::time_point sessionStartedAt{};
+    std::uint64_t connectedPingCount{};
+    std::optional<std::chrono::steady_clock::time_point> lastConnectedPing;
+    std::uint64_t connectedPongCount{};
+    std::optional<std::chrono::steady_clock::time_point> lastConnectedPong;
+    std::uint64_t detectLostConnectionsCount{};
+    std::optional<std::chrono::steady_clock::time_point> lastDetectLostConnections;
+};
+
+thread_local RakNetKeepaliveObservation rakNetKeepalive;
+
 struct UniversalValidationObservation {
     std::int32_t packetId{-1};
     std::chrono::steady_clock::time_point capturedAt{};
@@ -552,6 +565,44 @@ std::optional<TransportDisconnectEvidence> recentTransportDisconnect(
     return result;
 }
 
+std::optional<RakNetKeepaliveEvidence> snapshotRakNetKeepalive(
+        std::chrono::steady_clock::time_point now) {
+    if (!rakNetKeepalive.sessionStartObserved &&
+        rakNetKeepalive.connectedPingCount == 0 &&
+        rakNetKeepalive.connectedPongCount == 0 &&
+        rakNetKeepalive.detectLostConnectionsCount == 0) {
+        return std::nullopt;
+    }
+    const auto age = [now](
+                             const std::optional<
+                                     std::chrono::steady_clock::time_point>& value)
+            -> std::optional<std::uint64_t> {
+        if (!value)
+            return std::nullopt;
+        const auto elapsed = now >= *value
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(now - *value).count()
+                : 0;
+        return static_cast<std::uint64_t>(elapsed);
+    };
+    RakNetKeepaliveEvidence result;
+    result.sessionStartObserved = rakNetKeepalive.sessionStartObserved;
+    if (rakNetKeepalive.sessionStartObserved) {
+        const auto elapsed = now >= rakNetKeepalive.sessionStartedAt
+                ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                          now - rakNetKeepalive.sessionStartedAt).count()
+                : 0;
+        result.sessionAgeMilliseconds = static_cast<std::uint64_t>(elapsed);
+    }
+    result.connectedPingCount = rakNetKeepalive.connectedPingCount;
+    result.lastConnectedPingAgeMilliseconds = age(rakNetKeepalive.lastConnectedPing);
+    result.connectedPongCount = rakNetKeepalive.connectedPongCount;
+    result.lastConnectedPongAgeMilliseconds = age(rakNetKeepalive.lastConnectedPong);
+    result.detectLostConnectionsCount = rakNetKeepalive.detectLostConnectionsCount;
+    result.lastDetectLostConnectionsAgeMilliseconds =
+            age(rakNetKeepalive.lastDetectLostConnections);
+    return result;
+}
+
 void rememberInboundPacket(const InboundPacketObservation& packet) {
     inboundPacketHistory[inboundPacketHistoryNext] = packet;
     inboundPacketHistoryNext = (inboundPacketHistoryNext + 1) % packetHistoryCapacity;
@@ -561,6 +612,28 @@ void rememberInboundPacket(const InboundPacketObservation& packet) {
 
 extern "C" void dobby_capture_raknet_message(
         std::uint32_t messageId, const void* packet) {
+    const auto now = std::chrono::steady_clock::now();
+    if (messageId == 0x10) {
+        rakNetKeepalive = {};
+        rakNetKeepalive.sessionStartObserved = true;
+        rakNetKeepalive.sessionStartedAt = now;
+        return;
+    }
+    if (messageId == 0x00) {
+        ++rakNetKeepalive.connectedPingCount;
+        rakNetKeepalive.lastConnectedPing = now;
+        return;
+    }
+    if (messageId == 0x03) {
+        ++rakNetKeepalive.connectedPongCount;
+        rakNetKeepalive.lastConnectedPong = now;
+        return;
+    }
+    if (messageId == 0x04) {
+        ++rakNetKeepalive.detectLostConnectionsCount;
+        rakNetKeepalive.lastDetectLostConnections = now;
+        return;
+    }
     if ((messageId != 21 && messageId != 22) || packet == nullptr)
         return;
 
@@ -591,7 +664,7 @@ extern "C" void dobby_capture_raknet_message(
         return;
     }
     lastTransportDisconnect = {
-            messageId, packetLength, std::chrono::steady_clock::now(),
+            messageId, packetLength, now,
             packetLength > captureSize, std::move(rawBytes), true};
 }
 
@@ -908,6 +981,7 @@ bool captureBadPacketDisconnect(
         disconnect->recentOutboundPackets = snapshotOutboundPacketHistory(now);
         disconnect->nativeStackImageOffsets = captureMinecraftStack();
         disconnect->transport = recentTransportDisconnect(now);
+        disconnect->rakNetKeepalive = snapshotRakNetKeepalive(now);
         disconnect->contentDownloads = captureContentDownloadState();
     }
     auto diagnostic = buildDiagnostic(
@@ -938,6 +1012,7 @@ bool captureDisconnect(
     evidence->recentOutboundPackets = snapshotOutboundPacketHistory(now);
     evidence->nativeStackImageOffsets = captureMinecraftStack();
     evidence->transport = recentTransportDisconnect(now);
+    evidence->rakNetKeepalive = snapshotRakNetKeepalive(now);
     evidence->contentDownloads = captureContentDownloadState();
     auto diagnostic = buildDisconnectDiagnostic(
             std::move(*evidence),
@@ -980,6 +1055,7 @@ void onDisconnectDetour(
         handlingDisconnect = false;
         lastInboundPacket.valid = false;
         lastTransportDisconnect.valid = false;
+        rakNetKeepalive = {};
         // Bedrock creates its codeword screen inside this callback. Queue the
         // Dobby window afterward so the exact reason and evidence stay visible.
         if (captured && runtimeState().autoPopup())

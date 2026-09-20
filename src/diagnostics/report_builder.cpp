@@ -16,6 +16,7 @@
 #include <limits>
 #include <span>
 #include <sstream>
+#include <string_view>
 
 namespace dobby {
 namespace {
@@ -240,6 +241,73 @@ void appendContentDownloadsJson(
     json += "]}";
 }
 
+void appendOptionalAgeJson(
+        std::string& json, const std::optional<std::uint64_t>& age) {
+    json += age ? std::to_string(*age) : "null";
+}
+
+void appendRakNetKeepaliveJson(
+        std::string& json,
+        const std::optional<RakNetKeepaliveEvidence>& evidence) {
+    if (!evidence) {
+        json += "null";
+        return;
+    }
+    json += std::string("{\"session_start_observed\":") +
+            (evidence->sessionStartObserved ? "true" : "false") +
+            ",\"session_age_ms\":" +
+            std::to_string(evidence->sessionAgeMilliseconds) +
+            ",\"connected_ping\":{\"count\":" +
+            std::to_string(evidence->connectedPingCount) +
+            ",\"last_age_ms\":";
+    appendOptionalAgeJson(json, evidence->lastConnectedPingAgeMilliseconds);
+    json += "},\"connected_pong\":{\"count\":" +
+            std::to_string(evidence->connectedPongCount) +
+            ",\"last_age_ms\":";
+    appendOptionalAgeJson(json, evidence->lastConnectedPongAgeMilliseconds);
+    json += "},\"detect_lost_connections\":{\"count\":" +
+            std::to_string(evidence->detectLostConnectionsCount) +
+            ",\"last_age_ms\":";
+    appendOptionalAgeJson(
+            json, evidence->lastDetectLostConnectionsAgeMilliseconds);
+    json += "}}";
+}
+
+std::string buildRakNetKeepaliveReport(
+        const std::optional<RakNetKeepaliveEvidence>& evidence) {
+    if (!evidence)
+        return "\nRakNet keepalive observations: unavailable\n";
+    const auto line = [](std::string_view name, std::uint64_t count,
+                              const std::optional<std::uint64_t>& age) {
+        std::string result = "- " + std::string(name) + ": count " +
+                std::to_string(count) + " | last age ";
+        result += age ? std::to_string(*age) + "ms\n" : "unseen\n";
+        return result;
+    };
+    std::string output = "\nRakNet keepalive observations (client receive path):\n";
+    output += "Session start observed: " +
+            std::string(evidence->sessionStartObserved ? "yes" : "no");
+    if (evidence->sessionStartObserved)
+        output += " | age " + std::to_string(evidence->sessionAgeMilliseconds) + "ms";
+    output += '\n';
+    output += line(
+            "ID_CONNECTED_PING (0)", evidence->connectedPingCount,
+            evidence->lastConnectedPingAgeMilliseconds);
+    output += line(
+            "ID_CONNECTED_PONG (3)", evidence->connectedPongCount,
+            evidence->lastConnectedPongAgeMilliseconds);
+    output += line(
+            "ID_DETECT_LOST_CONNECTIONS (4)",
+            evidence->detectLostConnectionsCount,
+            evidence->lastDetectLostConnectionsAgeMilliseconds);
+    if (evidence->connectedPingCount == 0 && evidence->connectedPongCount == 0 &&
+        evidence->detectLostConnectionsCount == 0) {
+        output += "Interpretation: no inbound RakNet keepalive control message "
+                  "was observed during this session.\n";
+    }
+    return output;
+}
+
 std::string buildContentDownloadsReport(
         const std::optional<ContentDownloadStateEvidence>& state) {
     if (!state)
@@ -439,6 +507,8 @@ std::string buildDisconnectJson(const Diagnostic& diagnostic) {
     } else {
         json += "null";
     }
+    json += ",\"raknet_keepalive\":";
+    appendRakNetKeepaliveJson(json, evidence.rakNetKeepalive);
     json += ",\"content_downloads\":";
     appendContentDownloadsJson(json, evidence.contentDownloads);
     json += std::string(",\"minecraft_version\":\"") + kMinecraftVersion +
@@ -482,6 +552,7 @@ std::string buildDisconnectReport(const Diagnostic& diagnostic) {
     } else {
         output << "\nTransport event: unavailable\n";
     }
+    output << buildRakNetKeepaliveReport(evidence.rakNetKeepalive);
     if (!evidence.recentPackets.empty()) {
         output << "\nRecent inbound packets (oldest -> newest):\n";
         for (const auto& packet : evidence.recentPackets) {
@@ -767,6 +838,8 @@ std::string buildJson(const Diagnostic& diagnostic) {
         } else {
             json += "null";
         }
+        json += ",\"raknet_keepalive\":";
+        appendRakNetKeepaliveJson(json, evidence.rakNetKeepalive);
         json += ",\"content_downloads\":";
         appendContentDownloadsJson(json, evidence.contentDownloads);
         json += "}";
@@ -813,6 +886,7 @@ std::string buildReport(const Diagnostic& diagnostic) {
                     std::to_string(transport.packetLength) + " age " +
                     std::to_string(transport.ageMilliseconds) + "ms\n";
         }
+        report += buildRakNetKeepaliveReport(evidence.rakNetKeepalive);
         if (!evidence.recentOutboundPackets.empty()) {
             report += "Recent outbound packets:\n";
             for (const auto& packet : evidence.recentOutboundPackets) {

@@ -6,7 +6,7 @@
 
 namespace dobby {
 
-inline constexpr char kDobbyVersion[] = "2.18.0";
+inline constexpr char kDobbyVersion[] = "2.19.0";
 inline constexpr char kMinecraftVersion[] = "1.26.51.1";
 inline constexpr char kMinecraftBuildId[] = "712509dc14ccc233e91f267937dfb46ecdcc4b68";
 inline constexpr char kMinecraftDataVersion[] = "1.26.40";

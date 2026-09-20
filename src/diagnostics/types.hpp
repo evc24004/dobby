@@ -73,6 +73,17 @@ struct TransportDisconnectEvidence {
     std::vector<std::uint8_t> rawBytes;
 };
 
+struct RakNetKeepaliveEvidence {
+    bool sessionStartObserved{};
+    std::uint64_t sessionAgeMilliseconds{};
+    std::uint64_t connectedPingCount{};
+    std::optional<std::uint64_t> lastConnectedPingAgeMilliseconds;
+    std::uint64_t connectedPongCount{};
+    std::optional<std::uint64_t> lastConnectedPongAgeMilliseconds;
+    std::uint64_t detectLostConnectionsCount{};
+    std::optional<std::uint64_t> lastDetectLostConnectionsAgeMilliseconds;
+};
+
 struct ContentDownloadEvidence {
     std::string contentId;
     std::string productId;
@@ -139,6 +150,7 @@ struct DisconnectEvidence {
     std::vector<PacketHistoryEntry> recentPackets;
     std::vector<OutboundPacketHistoryEntry> recentOutboundPackets;
     std::optional<TransportDisconnectEvidence> transport;
+    std::optional<RakNetKeepaliveEvidence> rakNetKeepalive;
     std::optional<ContentDownloadStateEvidence> contentDownloads;
 };
 

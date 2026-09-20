@@ -70,6 +70,12 @@ are never sent. If the response has not been sent, the disconnect report also
 correlates the launcher's bounded `DownloadTemp` state and file sizes so a
 still-active critical world-pack download is visible in the popup and AI JSON.
 
+The same passive RakNet probe records inbound `ID_CONNECTED_PING`,
+`ID_CONNECTED_PONG`, and `ID_DETECT_LOST_CONNECTIONS` counts plus last-seen
+ages for each connection. Disconnect reports can therefore distinguish a
+silent transport during a long HTTP resource-pack download from a connection
+that was still receiving RakNet keepalives immediately before failure.
+
 The latest paste-ready report is `latest-dobby-violation.txt`; the complete
 machine-readable snapshot for AI analysis is `latest-dobby-ai.json`, and the
 append-only history is `dobby-events.jsonl`. These files live in the configured
@@ -86,7 +92,7 @@ traffic overlays can remain disabled without disabling packet diagnostics.
 
 ## Target
 
-- Dobby `2.18.0`
+- Dobby `2.19.0`
 - Minecraft Android `1.26.51.1`
 - `arm64-v8a`
 - network protocol `2193`
