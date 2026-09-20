@@ -3,6 +3,7 @@
 #include "core/preferences.hpp"
 #include "core/runtime_state.hpp"
 #include "diagnostics/client_schema_trace.hpp"
+#include "diagnostics/content_download_state.hpp"
 #include "diagnostics/disconnect_decoder.hpp"
 #include "diagnostics/protocol_dump.hpp"
 #include "diagnostics/report_builder.hpp"
@@ -188,6 +189,21 @@ void testDisconnectDecoderAndReport() {
                     true, {}};
     evidence->transport = dobby::TransportDisconnectEvidence{
             21, "ID_DISCONNECTION_NOTIFICATION", 1, 0, false, {0x15}};
+    dobby::ContentDownloadStateEvidence downloadState;
+    downloadState.decodeComplete = true;
+    dobby::ContentDownloadEvidence download;
+    download.contentId = "pack-a";
+    download.productId = "pack-a_1.0.0";
+    download.processState = "downloading";
+    download.initiatorCategory = "critical";
+    download.packType = "invalid";
+    download.packVersion = "1.0.0";
+    download.worldPack = true;
+    download.silent = true;
+    download.partialFilePresent = true;
+    download.partialBytes = 123456;
+    downloadState.downloads.push_back(std::move(download));
+    evidence->contentDownloads = std::move(downloadState);
 
     const auto diagnostic = dobby::buildDisconnectDiagnostic(
             std::move(*evidence), "unit test disconnect");
@@ -214,6 +230,9 @@ void testDisconnectDecoderAndReport() {
             std::string::npos);
     require(diagnostic.report.find("Requested resource-pack IDs:") !=
             std::string::npos);
+    require(diagnostic.report.find(
+                    "Interpretation: a required world-pack download was still active") !=
+            std::string::npos);
     require(diagnostic.json.find("\"event\":\"client_disconnect\"") !=
             std::string::npos);
     require(diagnostic.json.find("\"disconnect_reason\":41") !=
@@ -235,6 +254,8 @@ void testDisconnectDecoderAndReport() {
             std::string::npos);
     require(diagnostic.json.find(
                     "\"resource_pack_ids\":[\"pack-a\",\"pack-b\"]") !=
+            std::string::npos);
+    require(diagnostic.json.find("\"partial_bytes\":123456") !=
             std::string::npos);
 
     dobby::DisconnectEvidence badPacketEvidence;
@@ -298,6 +319,45 @@ void testResourcePackClientResponseDecoder() {
     const auto truncated = dobby::decodeResourcePackClientResponse(complete, true);
     require(!truncated.decodeComplete);
     require(truncated.rawBytesTruncated);
+}
+
+void testContentDownloadStateDecoder() {
+    constexpr std::string_view state = R"json({
+      "trackers": [
+        {
+          "binaryType": "unknown",
+          "contentId": "a60bec81-e5ca-450a-a375-8571f05e211d",
+          "initiatorCategory": "critical",
+          "packIds": [{
+            "type": "invalid",
+            "uuid": "a60bec81-e5ca-450a-a375-8571f05e211d",
+            "version": "1.0.113"
+          }],
+          "processState": "downloading",
+          "productId": "a60bec81-e5ca-450a-a375-8571f05e211d_1.0.113",
+          "silent": true,
+          "worldPack": true
+        }
+      ]
+    })json";
+    const auto decoded = dobby::decodeContentDownloadState(state);
+    require(decoded.decodeComplete);
+    require(decoded.downloads.size() == 1);
+    const auto& download = decoded.downloads.front();
+    require(download.contentId ==
+            "a60bec81-e5ca-450a-a375-8571f05e211d");
+    require(download.productId ==
+            "a60bec81-e5ca-450a-a375-8571f05e211d_1.0.113");
+    require(download.processState == "downloading");
+    require(download.initiatorCategory == "critical");
+    require(download.packType == "invalid");
+    require(download.packVersion == "1.0.113");
+    require(download.worldPack);
+    require(download.silent);
+
+    const auto malformed = dobby::decodeContentDownloadState("{\"trackers\":");
+    require(!malformed.decodeComplete);
+    require(!malformed.decodeError.empty());
 }
 
 void testUniversalValidationDecoder() {
@@ -1517,6 +1577,7 @@ int main() {
     testViolationDecoder();
     testDisconnectDecoderAndReport();
     testResourcePackClientResponseDecoder();
+    testContentDownloadStateDecoder();
     testUniversalValidationDecoder();
     testStreamProbeAndReport();
     testClientSchemaFieldTrace();

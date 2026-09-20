@@ -200,6 +200,82 @@ std::string imageOffsetHex(std::uint64_t offset) {
     return output.str();
 }
 
+void appendContentDownloadsJson(
+        std::string& json,
+        const std::optional<ContentDownloadStateEvidence>& state) {
+    if (!state) {
+        json += "null";
+        return;
+    }
+    json += std::string("{\"decode_complete\":") +
+            (state->decodeComplete ? "true" : "false") +
+            ",\"decode_error\":\"" + jsonEscape(state->decodeError) +
+            "\",\"downloads\":[";
+    for (std::size_t index = 0; index < state->downloads.size(); ++index) {
+        if (index != 0)
+            json += ',';
+        const auto& download = state->downloads[index];
+        json += std::string("{\"content_id\":\"") +
+                jsonEscape(download.contentId) +
+                "\",\"product_id\":\"" + jsonEscape(download.productId) +
+                "\",\"process_state\":\"" +
+                jsonEscape(download.processState) +
+                "\",\"initiator_category\":\"" +
+                jsonEscape(download.initiatorCategory) +
+                "\",\"pack_type\":\"" + jsonEscape(download.packType) +
+                "\",\"pack_version\":\"" +
+                jsonEscape(download.packVersion) +
+                "\",\"world_pack\":" +
+                (download.worldPack ? "true" : "false") +
+                ",\"silent\":" + (download.silent ? "true" : "false") +
+                ",\"partial_file_present\":" +
+                (download.partialFilePresent ? "true" : "false") +
+                ",\"partial_bytes\":" +
+                std::to_string(download.partialBytes) +
+                ",\"complete_file_present\":" +
+                (download.completeFilePresent ? "true" : "false") +
+                ",\"complete_bytes\":" +
+                std::to_string(download.completeBytes) + "}";
+    }
+    json += "]}";
+}
+
+std::string buildContentDownloadsReport(
+        const std::optional<ContentDownloadStateEvidence>& state) {
+    if (!state)
+        return "\nContent downloads: state file unavailable\n";
+    std::ostringstream output;
+    output << "\nContent downloads:\n";
+    if (!state->decodeComplete)
+        output << "- Decode incomplete: " << state->decodeError << '\n';
+    if (state->downloads.empty())
+        output << "- none recorded\n";
+    bool activeWorldPack = false;
+    for (const auto& download : state->downloads) {
+        output << "- " << download.contentId;
+        if (!download.packVersion.empty())
+            output << " version " << download.packVersion;
+        output << " | state "
+               << (download.processState.empty()
+                           ? "<unavailable>" : download.processState)
+               << " | type "
+               << (download.packType.empty() ? "<unavailable>" : download.packType)
+               << " | world_pack " << (download.worldPack ? "yes" : "no")
+               << " | silent " << (download.silent ? "yes" : "no") << '\n';
+        if (download.partialFilePresent)
+            output << "  Partial file: " << download.partialBytes << " bytes\n";
+        if (download.completeFilePresent)
+            output << "  Complete file: " << download.completeBytes << " bytes\n";
+        activeWorldPack = activeWorldPack ||
+                (download.worldPack && download.partialFilePresent);
+    }
+    if (activeWorldPack) {
+        output << "Interpretation: a required world-pack download was still "
+                  "active when the connection ended.\n";
+    }
+    return output.str();
+}
+
 std::string buildValidationReport(const ValidationEvidence& evidence) {
     std::ostringstream output;
     output << "Validation result: " << (evidence.resultSuccess ? "success" : "failure")
@@ -363,6 +439,8 @@ std::string buildDisconnectJson(const Diagnostic& diagnostic) {
     } else {
         json += "null";
     }
+    json += ",\"content_downloads\":";
+    appendContentDownloadsJson(json, evidence.contentDownloads);
     json += std::string(",\"minecraft_version\":\"") + kMinecraftVersion +
             "\",\"libminecraftpe_build_id\":\"" + kMinecraftBuildId + "\"}";
     return json;
@@ -447,6 +525,7 @@ std::string buildDisconnectReport(const Diagnostic& diagnostic) {
     } else {
         output << "\nRecent outbound packets: unavailable\n";
     }
+    output << buildContentDownloadsReport(evidence.contentDownloads);
     if (!evidence.nativeStackImageOffsets.empty()) {
         output << "\nNative stack (libminecraftpe image offsets):\n";
         for (const auto offset : evidence.nativeStackImageOffsets)
@@ -688,6 +767,8 @@ std::string buildJson(const Diagnostic& diagnostic) {
         } else {
             json += "null";
         }
+        json += ",\"content_downloads\":";
+        appendContentDownloadsJson(json, evidence.contentDownloads);
         json += "}";
     } else {
         json += ",\"disconnect\":null";
@@ -755,6 +836,7 @@ std::string buildReport(const Diagnostic& diagnostic) {
                 }
             }
         }
+        report += buildContentDownloadsReport(evidence.contentDownloads);
         report += "\n";
     }
 

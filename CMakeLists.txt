@@ -36,6 +36,7 @@ set(DOBBY_COMMON_SOURCES
     src/core/preferences.cpp
     src/core/runtime_state.cpp
     src/diagnostics/client_schema_trace.cpp
+    src/diagnostics/content_download_state.cpp
     src/diagnostics/disconnect_decoder.cpp
     src/diagnostics/protocol_dump.cpp
     src/diagnostics/report_builder.cpp
@@ -48,6 +49,7 @@ set(DOBBY_COMMON_SOURCES
     src/metrics/network_metrics.cpp
     src/metrics/packet_traffic.cpp
     src/platform/files.cpp
+    src/platform/content_downloads.cpp
     src/platform/process_memory.cpp
     src/platform/safe_memory.cpp
     src/platform/preferences_store.cpp

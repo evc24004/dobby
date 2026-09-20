@@ -13,6 +13,7 @@
 #include "hooks/minecraft_image.hpp"
 #include "hooks/outbound_packet_hook.hpp"
 #include "platform/files.hpp"
+#include "platform/content_downloads.hpp"
 #include "platform/launcher.hpp"
 #include "platform/log.hpp"
 #include "platform/safe_memory.hpp"
@@ -907,6 +908,7 @@ bool captureBadPacketDisconnect(
         disconnect->recentOutboundPackets = snapshotOutboundPacketHistory(now);
         disconnect->nativeStackImageOffsets = captureMinecraftStack();
         disconnect->transport = recentTransportDisconnect(now);
+        disconnect->contentDownloads = captureContentDownloadState();
     }
     auto diagnostic = buildDiagnostic(
             *record, std::move(streamFailure),
@@ -936,6 +938,7 @@ bool captureDisconnect(
     evidence->recentOutboundPackets = snapshotOutboundPacketHistory(now);
     evidence->nativeStackImageOffsets = captureMinecraftStack();
     evidence->transport = recentTransportDisconnect(now);
+    evidence->contentDownloads = captureContentDownloadState();
     auto diagnostic = buildDisconnectDiagnostic(
             std::move(*evidence),
             "ClientNetworkHandler::onDisconnect inline entry");

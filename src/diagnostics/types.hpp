@@ -73,6 +73,27 @@ struct TransportDisconnectEvidence {
     std::vector<std::uint8_t> rawBytes;
 };
 
+struct ContentDownloadEvidence {
+    std::string contentId;
+    std::string productId;
+    std::string processState;
+    std::string initiatorCategory;
+    std::string packType;
+    std::string packVersion;
+    bool worldPack{};
+    bool silent{};
+    bool partialFilePresent{};
+    std::uint64_t partialBytes{};
+    bool completeFilePresent{};
+    std::uint64_t completeBytes{};
+};
+
+struct ContentDownloadStateEvidence {
+    bool decodeComplete{};
+    std::string decodeError;
+    std::vector<ContentDownloadEvidence> downloads;
+};
+
 struct ValidationSourceEvidence {
     std::uint64_t filenameHash{};
     std::string filename;
@@ -118,6 +139,7 @@ struct DisconnectEvidence {
     std::vector<PacketHistoryEntry> recentPackets;
     std::vector<OutboundPacketHistoryEntry> recentOutboundPackets;
     std::optional<TransportDisconnectEvidence> transport;
+    std::optional<ContentDownloadStateEvidence> contentDownloads;
 };
 
 struct Diagnostic {

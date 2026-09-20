@@ -229,6 +229,24 @@ void showLatestViolation(void*) {
                             response.decodeError + ")";
             }
         }
+        if (disconnect.contentDownloads) {
+            std::size_t activeWorldPacks = 0;
+            std::uint64_t partialBytes = 0;
+            for (const auto& download :
+                 disconnect.contentDownloads->downloads) {
+                if (download.worldPack && download.partialFilePresent) {
+                    ++activeWorldPacks;
+                    partialBytes += download.partialBytes;
+                }
+            }
+            if (activeWorldPacks != 0) {
+                if (!context.empty() && context.back() != '\n')
+                    context += '\n';
+                context += "World-pack downloads still active: " +
+                        std::to_string(activeWorldPacks) + " (" +
+                        std::to_string(partialBytes) + " bytes partial)";
+            }
+        }
         if (context.empty())
             context = "No server message or recent inbound packet was available.";
         std::array<LauncherControl, 4> controls{

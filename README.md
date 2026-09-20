@@ -66,7 +66,9 @@ packet IDs. During resource-pack negotiation this shows whether the client sent
 serializes a passive copy into an isolated `BinaryStream` and records the exact
 status (`refused`, `send_packs`, `have_all_packs`, or `completed`), the observed
 status string, requested pack IDs, and bounded raw bytes. Those isolated bytes
-are never sent.
+are never sent. If the response has not been sent, the disconnect report also
+correlates the launcher's bounded `DownloadTemp` state and file sizes so a
+still-active critical world-pack download is visible in the popup and AI JSON.
 
 The latest paste-ready report is `latest-dobby-violation.txt`; the complete
 machine-readable snapshot for AI analysis is `latest-dobby-ai.json`, and the
@@ -84,7 +86,7 @@ traffic overlays can remain disabled without disabling packet diagnostics.
 
 ## Target
 
-- Dobby `2.17.0`
+- Dobby `2.18.0`
 - Minecraft Android `1.26.51.1`
 - `arm64-v8a`
 - network protocol `2193`
