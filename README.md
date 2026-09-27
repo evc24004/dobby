@@ -57,6 +57,11 @@ reason and stage, the 1.26.51.1 enum name and shipped UI codeword (for example,
 last 32 inbound packet IDs/sizes/ages, and an image-relative native stack. This
 path is passive and does not suppress, rewrite, or retry the disconnect.
 
+Normal Save & Quit callbacks (generic reason 41 with `skipMessage=true`, no
+transport error and no explicit message) are logged without opening an error
+popup or replacing the latest error report. Recent BadPacket evidence takes
+precedence, so silent teardown cannot hide a confirmed packet failure.
+
 For generic `Bat` disconnects, Dobby also probes the exact RakNet dispatch
 branch that produces reason 41. It distinguishes
 `ID_DISCONNECTION_NOTIFICATION` (21) from `ID_CONNECTION_LOST` (22), preserves
@@ -97,7 +102,7 @@ traffic overlays can remain disabled without disabling packet diagnostics.
 
 ## Target
 
-- Dobby `2.19.1`
+- Dobby `2.19.2`
 - Minecraft Android `1.26.51.1`
 - `arm64-v8a`
 - network protocol `2193`

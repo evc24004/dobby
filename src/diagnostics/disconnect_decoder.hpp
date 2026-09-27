@@ -10,6 +10,7 @@ namespace dobby {
 
 std::string_view disconnectReasonName(std::int32_t reason);
 std::string_view disconnectCodeword(std::int32_t reason);
+bool isQuietDisconnect(const DisconnectEvidence& evidence);
 
 std::optional<DisconnectEvidence> decodeDisconnectArguments(
         std::int32_t reason, std::int32_t stage,

@@ -265,4 +265,11 @@ std::optional<DisconnectEvidence> decodeDisconnectArguments(
     return result;
 }
 
+bool isQuietDisconnect(const DisconnectEvidence& evidence) {
+    // Native silent-exit requests are quiet only without explicit failure evidence.
+    return evidence.reason == 41 && evidence.skipMessage &&
+            !evidence.transport && evidence.messageFromServer.empty() &&
+            evidence.messageBodyOverride.empty();
+}
+
 } // namespace dobby

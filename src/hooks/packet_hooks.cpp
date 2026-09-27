@@ -1036,6 +1036,15 @@ bool captureDisconnect(
             return true;
         }
     }
+    if (isQuietDisconnect(*evidence)) {
+        // Recent BadPacket correlation above takes precedence. Quiet exits
+        // remain in the audit log without replacing latest errors or the UI.
+        const auto quiet = buildDisconnectDiagnostic(
+                std::move(*evidence), "silent disconnect callback (log only)");
+        writeFile(eventPath(), quiet.json + "\n", "a");
+        logLine(quiet.json);
+        return false;
+    }
     auto diagnostic = buildDisconnectDiagnostic(
             std::move(*evidence),
             "ClientNetworkHandler::onDisconnect inline entry");

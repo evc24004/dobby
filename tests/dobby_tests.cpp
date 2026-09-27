@@ -311,6 +311,30 @@ void testDisconnectDecoderAndReport() {
     followup.reason = 32;
     require(!dobby::correlateDisconnectFollowup(badPacketDiagnostic, followup, 43));
     require(dobby::packetName(348) == "ClientboundUpdateSoundDataPacket");
+    dobby::DisconnectEvidence quietExit;
+    quietExit.reason = 41;
+    quietExit.skipMessage = true;
+    require(dobby::isQuietDisconnect(quietExit));
+    quietExit.skipMessage = false;
+    require(!dobby::isQuietDisconnect(quietExit));
+    quietExit.skipMessage = true;
+    quietExit.reason = 90;
+    require(!dobby::isQuietDisconnect(quietExit));
+    quietExit.reason = 41;
+    quietExit.messageFromServer = "Server kicked player";
+    require(!dobby::isQuietDisconnect(quietExit));
+    quietExit.messageFromServer.clear();
+    quietExit.messageBodyOverride = "Connection error";
+    require(!dobby::isQuietDisconnect(quietExit));
+    quietExit.messageBodyOverride.clear();
+    quietExit.transport = dobby::TransportDisconnectEvidence{
+            22, "ID_CONNECTION_LOST", 1, 0, false, {0x16}};
+    require(!dobby::isQuietDisconnect(quietExit));
+    quietExit.transport->messageId = 21;
+    require(!dobby::isQuietDisconnect(quietExit));
+    quietExit.transport.reset();
+    require(dobby::correlateDisconnectFollowup(
+            badPacketDiagnostic, quietExit, 43).has_value());
 
     const auto empty = dobby::decodeDisconnectArguments(
             32, 0, nullptr, nullptr, true, false, false);
