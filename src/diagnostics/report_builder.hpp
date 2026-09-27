@@ -19,6 +19,9 @@ Diagnostic buildDiagnostic(
         std::optional<DisconnectEvidence> disconnect = std::nullopt);
 Diagnostic buildDisconnectDiagnostic(
         DisconnectEvidence evidence, std::string intercept);
+std::optional<Diagnostic> correlateDisconnectFollowup(
+        const Diagnostic& prior, const DisconnectEvidence& followup,
+        std::uint64_t elapsedMilliseconds);
 std::string buildDeveloperStatus(const RuntimeSnapshot& snapshot);
 std::string rawPacketHex(const Diagnostic& diagnostic);
 std::string streamFailureSummary(const Diagnostic& diagnostic);

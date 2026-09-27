@@ -451,6 +451,8 @@ struct UniversalValidationObservation {
 };
 
 thread_local UniversalValidationObservation lastUniversalValidation;
+thread_local std::optional<Diagnostic> pendingBadPacketDiagnostic;
+thread_local std::chrono::steady_clock::time_point pendingBadPacketAt;
 
 struct UnwindCapture {
     std::vector<std::uint64_t>* offsets{};
@@ -614,6 +616,7 @@ extern "C" void dobby_capture_raknet_message(
         std::uint32_t messageId, const void* packet) {
     const auto now = std::chrono::steady_clock::now();
     if (messageId == 0x10) {
+        pendingBadPacketDiagnostic.reset();
         rakNetKeepalive = {};
         rakNetKeepalive.sessionStartObserved = true;
         rakNetKeepalive.sessionStartedAt = now;
@@ -988,6 +991,8 @@ bool captureBadPacketDisconnect(
             *record, std::move(streamFailure),
             "ClientNetworkHandler::onDisconnect BadPacket + allowIncomingPacketId",
             std::move(validation), std::move(disconnect));
+    pendingBadPacketDiagnostic = diagnostic;
+    pendingBadPacketAt = now;
     persistDiagnostic(diagnostic);
     runtimeState().addDiagnostic(std::move(diagnostic));
     return true;
@@ -1014,6 +1019,23 @@ bool captureDisconnect(
     evidence->transport = recentTransportDisconnect(now);
     evidence->rakNetKeepalive = snapshotRakNetKeepalive(now);
     evidence->contentDownloads = captureContentDownloadState();
+    if (pendingBadPacketDiagnostic) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - pendingBadPacketAt).count();
+        auto correlated = elapsed >= 0
+                ? correlateDisconnectFollowup(
+                          *pendingBadPacketDiagnostic, *evidence,
+                          static_cast<std::uint64_t>(elapsed))
+                : std::nullopt;
+        pendingBadPacketDiagnostic.reset();
+        if (correlated) {
+            // Preserve the actual terminal packet failure in latest files and UI.
+            // The transport callback follows it during normal teardown.
+            persistDiagnostic(*correlated);
+            runtimeState().addDiagnostic(std::move(*correlated));
+            return true;
+        }
+    }
     auto diagnostic = buildDisconnectDiagnostic(
             std::move(*evidence),
             "ClientNetworkHandler::onDisconnect inline entry");

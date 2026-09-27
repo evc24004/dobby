@@ -77,7 +77,12 @@ silent transport during a long HTTP resource-pack download from a connection
 that was still receiving RakNet keepalives immediately before failure.
 
 The latest paste-ready report is `latest-dobby-violation.txt`; the complete
-machine-readable snapshot for AI analysis is `latest-dobby-ai.json`, and the
+packet failure is preserved when a generic disconnect follows BadPacket within
+two seconds on the same callback thread. The follow-up transport event is
+attached to that report. Packet 348 is `ClientboundUpdateSoundDataPacket`, per
+[Mojang's protocol 2193 documentation](https://mojang.github.io/bedrock-protocol-docs/1.26.50/packets/clientbound-update-sound-data-packet/).
+
+The machine-readable snapshot for AI analysis is `latest-dobby-ai.json`, and the
 append-only history is `dobby-events.jsonl`. These files live in the configured
 Dobby output directory and are never committed.
 
@@ -92,7 +97,7 @@ traffic overlays can remain disabled without disabling packet diagnostics.
 
 ## Target
 
-- Dobby `2.19.0`
+- Dobby `2.19.1`
 - Minecraft Android `1.26.51.1`
 - `arm64-v8a`
 - network protocol `2193`

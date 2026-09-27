@@ -264,7 +264,8 @@ inline constexpr std::array<PacketNameEntry, 252> kPacketNames{{
         PacketNameEntry{345, "ClientboundAttributeLayerSyncPacket"},
         PacketNameEntry{346, "ServerStoreInfo"},
         PacketNameEntry{347, "ServerPresenceInfo"},
-        PacketNameEntry{348, "EndId"},
+        // Mojang protocol 2193 docs; EndId in the older header was a sentinel.
+        PacketNameEntry{348, "ClientboundUpdateSoundDataPacket"},
 }};
 
 inline constexpr std::string_view packetName(std::int32_t id) {

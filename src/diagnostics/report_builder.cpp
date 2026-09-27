@@ -19,6 +19,25 @@
 #include <string_view>
 
 namespace dobby {
+std::optional<Diagnostic> correlateDisconnectFollowup(
+        const Diagnostic& prior, const DisconnectEvidence& followup,
+        std::uint64_t elapsedMilliseconds) {
+    if (elapsedMilliseconds > 2000 ||
+        prior.kind != DiagnosticKind::packetViolation ||
+        !prior.disconnect || prior.disconnect->reason != 90 ||
+        followup.reason != 41)
+        return std::nullopt;
+    auto evidence = *prior.disconnect;
+    evidence.transport = followup.transport;
+    const auto context = prior.context +
+            "\nFollow-up disconnect: " + followup.reasonName + " (41) / " +
+            followup.codeword + " after " + std::to_string(elapsedMilliseconds) +
+            "ms. Original BadPacket evidence preserved; transport event belongs to follow-up.";
+    return buildDiagnostic(
+            {prior.type, prior.severity, prior.packetId, context, prior.contextStorage},
+            prior.streamFailure, "BadPacket with subsequent disconnect callback",
+            prior.validation, std::move(evidence));
+}
 namespace {
 
 std::string packetNameString(std::int32_t packetId) {

@@ -293,6 +293,25 @@ void testDisconnectDecoderAndReport() {
                     "Disconnect callback: BadPacket (90) / Block") !=
             std::string::npos);
 
+    dobby::DisconnectEvidence followup;
+    followup.reason = 41;
+    followup.reasonName = "Disconnected";
+    followup.codeword = "Bat";
+    followup.transport = dobby::TransportDisconnectEvidence{
+            21, "ID_DISCONNECTION_NOTIFICATION", 1, 0, false, {0x15}};
+    const auto combined = dobby::correlateDisconnectFollowup(
+            badPacketDiagnostic, followup, 43);
+    require(combined.has_value());
+    require(combined->kind == dobby::DiagnosticKind::packetViolation);
+    require(combined->packetId == 19);
+    require(combined->report.find("BadPacket (90) / Block") != std::string::npos);
+    require(combined->report.find("after 43ms") != std::string::npos);
+    require(combined->disconnect->transport->messageId == 21);
+    require(!dobby::correlateDisconnectFollowup(badPacketDiagnostic, followup, 2001));
+    followup.reason = 32;
+    require(!dobby::correlateDisconnectFollowup(badPacketDiagnostic, followup, 43));
+    require(dobby::packetName(348) == "ClientboundUpdateSoundDataPacket");
+
     const auto empty = dobby::decodeDisconnectArguments(
             32, 0, nullptr, nullptr, true, false, false);
     require(empty.has_value());
