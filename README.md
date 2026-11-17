@@ -25,7 +25,7 @@ Menu toggles are saved locally and restored on the next launch.
 
 On targets with a validated packet factory, Dobby sweeps the client packet
 factory and passively traces each safe default packet into an isolated
-`BinaryStream`; none of those bytes are sent. The 1.26.51.1 release keeps this
+`BinaryStream`; none of those bytes are sent. The 1.26.60.4 release keeps this
 optional dump disabled until its factory and schema-writer vtables are mapped.
 
 Default values cannot prove empty collection element types or untaken conditional branches, so Dobby also embeds the exact PrismarineJS Bedrock `1.26.40` baseline from commit `8a80816cbfb3fe2b609f2cde4e57796c8033af61`. Startup verifies its size and hash before atomically writing the pinned baseline files `protocol.json` and `version.json`; direct runtime evidence remains separate in `protocol-observed.json`. `protocol-dump-status.json` records reference-only IDs, runtime-name divergences, serialization failures, field traces, source commit, and hashes. A failed target or reference check produces no claimed verified baseline.
@@ -52,7 +52,7 @@ worker callback cannot silently lose the window.
 The same `onDisconnect` hook now records every disconnect reason. Non-packet
 reasons become `client_disconnect` events; `BadPacket` keeps its richer packet
 report and gains the same callback evidence. Reports preserve the exact numeric
-reason and stage, the 1.26.51.1 enum name and shipped UI codeword (for example,
+reason and stage, the 1.26.60.4 enum name and shipped UI codeword (for example,
 `Disconnected (41) / Bat`), bounded server/body strings, callback flags, the
 last 32 inbound packet IDs/sizes/ages, and an image-relative native stack. This
 path is passive and does not suppress, rewrite, or retry the disconnect.
@@ -102,21 +102,25 @@ traffic overlays can remain disabled without disabling packet diagnostics.
 
 ## Target
 
-- Dobby `2.19.2`
-- Minecraft Android `1.26.51.1`
+- Dobby `2.20.0`
+- Minecraft Android `1.26.60.4`
 - `arm64-v8a`
-- network protocol `2193`
-- Android version code `972605101`
-- `libminecraftpe.so` build ID `712509dc14ccc233e91f267937dfb46ecdcc4b68`
+- network protocol `2225`
+- Android version code `972606004`
+- `libminecraftpe.so` build ID `eb291b883dfdfaff70c4999c2eabd61885ae3e15`
 
 The mod validates the target signature and refuses to patch incompatible builds.
 
 On macOS, use the launcher’s Android/arm64 profile for this build. The
-1.26.51.1 port initializes the validated packet diagnostics, schema tracing,
-render, entity, network, outbound, packet-traffic, and loaded-chunk lifecycle
-hooks. Protocol discovery, chest ESP, ore ESP, and the packet-rate/pending-chunk
-paths remain fail-closed until their target-specific layouts and dispatch
-targets are proven for this binary.
+1.26.60.4 port initializes the validated packet diagnostics (Packet::read,
+PacketSecurityController, stream probe, exact boundary, schema field trace,
+handlePacketViolation, onDisconnect, RakNet cause probe), outbound history,
+packet traffic, ping and server-tick metrics. Targets were re-found against the
+1.26.51.1 image by identical function bodies and RTTI vtable slots
+(`tools/map_release_offsets.py`, `compare_vtables.py`, `diff_functions.py`).
+Entity, camera and render overlays, chest and ore ESP, loaded-chunk lifecycle,
+and protocol discovery are zeroed and fail closed until their targets are proven
+for this binary.
 
 ## Build
 

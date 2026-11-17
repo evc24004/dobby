@@ -6,11 +6,11 @@
 
 namespace dobby {
 
-inline constexpr char kDobbyVersion[] = "2.19.2";
-inline constexpr char kMinecraftVersion[] = "1.26.51.1";
-inline constexpr char kMinecraftBuildId[] = "712509dc14ccc233e91f267937dfb46ecdcc4b68";
+inline constexpr char kDobbyVersion[] = "2.20.0";
+inline constexpr char kMinecraftVersion[] = "1.26.60.4";
+inline constexpr char kMinecraftBuildId[] = "eb291b883dfdfaff70c4999c2eabd61885ae3e15";
 inline constexpr char kMinecraftDataVersion[] = "1.26.40";
-inline constexpr std::int32_t kMinecraftProtocolVersion = 2193;
+inline constexpr std::int32_t kMinecraftProtocolVersion = 2225;
 inline constexpr char kAbi[] = "arm64-v8a";
 
 inline constexpr std::size_t kDefaultHistoryLimit = 100;
@@ -25,9 +25,9 @@ namespace target {
 // choke point after packet size checks and Packet::_read deserialization. Its
 // expected result preserves the original error code before response handling
 // turns it into a generic BadPacket disconnect.
-inline constexpr std::uintptr_t kPacketSecurityCheckForViolationOffset = 0x0c64d5ec;
+inline constexpr std::uintptr_t kPacketSecurityCheckForViolationOffset = 0x0cc409f8;
 inline constexpr std::uintptr_t kPacketSecurityCheckForViolationVtableSlotOffset =
-        0x12e26758;
+        0x13b30860;
 inline constexpr std::array<std::uint8_t, 16>
         kPacketSecurityCheckForViolationSignature{
                 0xfd, 0x7b, 0xbc, 0xa9, 0xf8, 0x5f, 0x01, 0xa9,
@@ -37,15 +37,15 @@ inline constexpr std::array<std::uint8_t, 16>
 // returns Bedrock::Result<void> through x8 under the Android ARM64 ABI. The
 // representative PacketViolationWarningPacket vtable slot proves the shared
 // target before its entry is patched, covering direct and virtual calls.
-inline constexpr std::uintptr_t kPacketReadOffset = 0x0c64bc64;
+inline constexpr std::uintptr_t kPacketReadOffset = 0x0cc3f070;
 inline constexpr std::uintptr_t kPacketReadVerificationVtableSlotOffset =
-        0x12e7f3c8;
+        0x13b8ef00;
 inline constexpr std::array<std::uint8_t, 16> kPacketReadSignature{
         0xff, 0x83, 0x06, 0xd1, 0xfd, 0x7b, 0x16, 0xa9,
         0xfc, 0x5f, 0x17, 0xa9, 0xf6, 0x57, 0x18, 0xa9};
 
-inline constexpr std::uintptr_t kViolationGetIdOffset = 0x0d2f60a0;
-inline constexpr std::uintptr_t kViolationGetIdVtableSlotOffset = 0x12e7f388;
+inline constexpr std::uintptr_t kViolationGetIdOffset = 0x0da807f8;
+inline constexpr std::uintptr_t kViolationGetIdVtableSlotOffset = 0x13b8eec0;
 inline constexpr std::array<std::uint8_t, 8> kViolationGetIdSignature{
         0x80, 0x13, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6};
 
@@ -53,8 +53,8 @@ inline constexpr std::array<std::uint8_t, 8> kViolationGetIdSignature{
 // invalid packet ID, and context before a terminating violation becomes
 // DisconnectFailReason::BadPacket (90). LegacyClientNetworkHandler uses the
 // inherited primary vtable slot below in the supported Android target.
-inline constexpr std::uintptr_t kHandlePacketViolationOffset = 0x09ecab14;
-inline constexpr std::uintptr_t kHandlePacketViolationVtableSlotOffset = 0x12d24c50;
+inline constexpr std::uintptr_t kHandlePacketViolationOffset = 0x0a2d8c4c;
+inline constexpr std::uintptr_t kHandlePacketViolationVtableSlotOffset = 0x1394b8e0;
 inline constexpr std::array<std::uint8_t, 16> kHandlePacketViolationSignature{
         0xfd, 0x7b, 0xba, 0xa9, 0xfc, 0x6f, 0x01, 0xa9,
         0xfa, 0x67, 0x02, 0xa9, 0xf8, 0x5f, 0x03, 0xa9};
@@ -63,14 +63,14 @@ inline constexpr std::array<std::uint8_t, 16> kHandlePacketViolationSignature{
 // filter runs before decoding and exposes the exact inbound packet ID and
 // declared size. onDisconnect exposes every final disconnect reason, stage,
 // and any server/body error strings passed to the client.
-inline constexpr std::uintptr_t kOnDisconnectOffset = 0x09ec9bfc;
-inline constexpr std::uintptr_t kOnDisconnectVtableSlotOffset = 0x12d24c30;
+inline constexpr std::uintptr_t kOnDisconnectOffset = 0x0a2d80a4;
+inline constexpr std::uintptr_t kOnDisconnectVtableSlotOffset = 0x1394b8c0;
 inline constexpr std::array<std::uint8_t, 16> kOnDisconnectSignature{
         0xff, 0xc3, 0x03, 0xd1, 0xe8, 0x43, 0x00, 0xfd,
         0xfd, 0x7b, 0x09, 0xa9, 0xfc, 0x6f, 0x0a, 0xa9};
 
-inline constexpr std::uintptr_t kAllowIncomingPacketIdOffset = 0x09ecaaf0;
-inline constexpr std::uintptr_t kAllowIncomingPacketIdVtableSlotOffset = 0x12d24c38;
+inline constexpr std::uintptr_t kAllowIncomingPacketIdOffset = 0x0a2d8c28;
+inline constexpr std::uintptr_t kAllowIncomingPacketIdVtableSlotOffset = 0x1394b8c8;
 inline constexpr std::array<std::uint8_t, 16> kAllowIncomingPacketIdSignature{
         0x5f, 0x14, 0x00, 0x71, 0x09, 0x24, 0x43, 0x39,
         0xe8, 0xd7, 0x9f, 0x1a, 0x08, 0x79, 0x1f, 0x53};
@@ -78,67 +78,67 @@ inline constexpr std::array<std::uint8_t, 16> kAllowIncomingPacketIdSignature{
 // RakNetConnector's packet pump has already read Packet::data[0] into w20 at
 // this instruction. IDs 21 and 22 are the exact transport events that its next
 // branch flattens into DisconnectFailReason::Disconnected (41).
-inline constexpr std::uintptr_t kRakNetMessageDispatchProbeOffset = 0x0c65089c;
+inline constexpr std::uintptr_t kRakNetMessageDispatchProbeOffset = 0x0cbc8250;
 inline constexpr std::array<std::uint8_t, 16>
         kRakNetMessageDispatchProbeSignature{
                 0x9f, 0x36, 0x02, 0x71, 0xa8, 0x02, 0x00, 0x54,
                 0x9f, 0x52, 0x00, 0x71, 0x2c, 0x04, 0x00, 0x54};
 inline constexpr std::uintptr_t kRakNetMessageDispatchLowContinueOffset =
-        0x0c6508ac;
+        0x0cbc8260;
 inline constexpr std::uintptr_t kRakNetMessageDispatchHighContinueOffset =
-        0x0c6508f4;
+        0x0cbc82a8;
 inline constexpr std::uintptr_t kRakNetMessageDispatchGreaterContinueOffset =
-        0x0c65092c;
+        0x0cbc82e0;
 
-inline constexpr std::uintptr_t kStreamReadOffset = 0x12804684;
-inline constexpr std::uintptr_t kStreamReadVtableSlotOffset = 0x13267ba0;
+inline constexpr std::uintptr_t kStreamReadOffset = 0x134c57a8;
+inline constexpr std::uintptr_t kStreamReadVtableSlotOffset = 0x13f8b4f8;
 inline constexpr std::array<std::uint8_t, 16> kStreamReadSignature{
         0xff, 0x83, 0x04, 0xd1, 0xfd, 0x7b, 0x0e, 0xa9,
         0xfc, 0x7b, 0x00, 0xf9, 0xf6, 0x57, 0x10, 0xa9};
 
-inline constexpr std::uintptr_t kPacketEndCheckOffset = 0x128043f4;
+inline constexpr std::uintptr_t kPacketEndCheckOffset = 0x134c5518;
 inline constexpr std::array<std::uint8_t, 16> kPacketEndCheckSignature{
         0xff, 0x43, 0x02, 0xd1, 0xfd, 0x7b, 0x06, 0xa9,
         0xf5, 0x3b, 0x00, 0xf9, 0xf4, 0x4f, 0x08, 0xa9};
 
 // PacketSchemaReader virtuals verified against the matching LeviLamina headers.
-inline constexpr std::uintptr_t kSchemaPushMemberOffset = 0x0cf542cc;
-inline constexpr std::uintptr_t kSchemaPushMemberVtableSlotOffset = 0x12e66ee8;
+inline constexpr std::uintptr_t kSchemaPushMemberOffset = 0x0d4fb268;
+inline constexpr std::uintptr_t kSchemaPushMemberVtableSlotOffset = 0x13b6f210;
 inline constexpr std::array<std::uint8_t, 8> kSchemaPushMemberSignature{
         0x20, 0x00, 0x80, 0x52, 0xc0, 0x03, 0x5f, 0xd6};
 
-inline constexpr std::uintptr_t kSchemaPushElementOffset = 0x0cf542e0;
-inline constexpr std::uintptr_t kSchemaPushElementVtableSlotOffset = 0x12e66ef8;
+inline constexpr std::uintptr_t kSchemaPushElementOffset = 0x0d4fb27c;
+inline constexpr std::uintptr_t kSchemaPushElementVtableSlotOffset = 0x13b6f220;
 inline constexpr std::array<std::uint8_t, 4> kSchemaPushElementSignature{
         0xc0, 0x03, 0x5f, 0xd6};
 
-inline constexpr std::uintptr_t kSchemaPopOffset = 0x0cf542e4;
-inline constexpr std::uintptr_t kSchemaPopVtableSlotOffset = 0x12e66f00;
+inline constexpr std::uintptr_t kSchemaPopOffset = 0x0d4fb280;
+inline constexpr std::uintptr_t kSchemaPopVtableSlotOffset = 0x13b6f228;
 inline constexpr std::array<std::uint8_t, 4> kSchemaPopSignature{
         0xc0, 0x03, 0x5f, 0xd6};
 
 // ActorRenderDispatcher::render(BaseActorRenderContext&, Actor&, bool).
-inline constexpr std::uintptr_t kActorRenderOffset = 0x0a79f8a4;
+inline constexpr std::uintptr_t kActorRenderOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16> kActorRenderSignature{
         0xff, 0x43, 0x02, 0xd1, 0xeb, 0x2b, 0x03, 0x6d,
         0xe9, 0x23, 0x04, 0x6d, 0xfd, 0x7b, 0x05, 0xa9};
 
 // RenderChunkCoordinator lifecycle hooks expose the client-decoded LevelChunk
 // after Bedrock has loaded it. No packet is requested, changed, or suppressed.
-inline constexpr std::uintptr_t kChunkCoordinatorOnChunkLoadedOffset = 0x0a56daa0;
-inline constexpr std::uintptr_t kChunkCoordinatorOnChunkLoadedSlotOffset = 0x12ce4a30;
+inline constexpr std::uintptr_t kChunkCoordinatorOnChunkLoadedOffset = 0;  // not mapped for 1.26.60.4: fail closed
+inline constexpr std::uintptr_t kChunkCoordinatorOnChunkLoadedSlotOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16> kChunkCoordinatorOnChunkLoadedSignature{
         0xff, 0x43, 0x02, 0xd1, 0xfd, 0x7b, 0x03, 0xa9,
         0xfc, 0x6f, 0x04, 0xa9, 0xfa, 0x67, 0x05, 0xa9};
 
-inline constexpr std::uintptr_t kChunkCoordinatorOnSubChunkLoadedOffset = 0x0a56e008;
-inline constexpr std::uintptr_t kChunkCoordinatorOnSubChunkLoadedSlotOffset = 0x12ce4a40;
+inline constexpr std::uintptr_t kChunkCoordinatorOnSubChunkLoadedOffset = 0;  // not mapped for 1.26.60.4: fail closed
+inline constexpr std::uintptr_t kChunkCoordinatorOnSubChunkLoadedSlotOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16> kChunkCoordinatorOnSubChunkLoadedSignature{
         0xff, 0x83, 0x01, 0xd1, 0xfd, 0x7b, 0x02, 0xa9,
         0xf7, 0x1b, 0x00, 0xf9, 0xf6, 0x57, 0x04, 0xa9};
 
-inline constexpr std::uintptr_t kChunkCoordinatorOnChunkUnloadedOffset = 0x08cbedc0;
-inline constexpr std::uintptr_t kChunkCoordinatorOnChunkUnloadedSlotOffset = 0x12ce4a48;
+inline constexpr std::uintptr_t kChunkCoordinatorOnChunkUnloadedOffset = 0;  // not mapped for 1.26.60.4: fail closed
+inline constexpr std::uintptr_t kChunkCoordinatorOnChunkUnloadedSlotOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 4> kChunkCoordinatorOnChunkUnloadedSignature{
         0xc0, 0x03, 0x5f, 0xd6};
 
@@ -146,27 +146,27 @@ inline constexpr std::array<std::uint8_t, 4> kChunkCoordinatorOnChunkUnloadedSig
 // Android image identify the primary vtable address point. The constructor and
 // base BlockActor initializer prove that the BlockPos argument is x4 and that
 // the resulting BlockActor stores its position at object + 0x08.
-inline constexpr std::uintptr_t kChestBlockActorConstructorOffset = 0x106ed6e0;
+inline constexpr std::uintptr_t kChestBlockActorConstructorOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16> kChestBlockActorConstructorSignature{
         0xfd, 0x7b, 0xbe, 0xa9, 0xf4, 0x4f, 0x01, 0xa9,
         0xfd, 0x03, 0x00, 0x91, 0xf4, 0x03, 0x03, 0xaa};
-inline constexpr std::uintptr_t kChestBlockActorFactoryOffset = 0x106ed900;
+inline constexpr std::uintptr_t kChestBlockActorFactoryOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16> kChestBlockActorFactorySignature{
         0xfd, 0x7b, 0xbd, 0xa9, 0xf6, 0x57, 0x01, 0xa9,
         0xf4, 0x4f, 0x02, 0xa9, 0xfd, 0x03, 0x00, 0x91};
-inline constexpr std::uintptr_t kChestBlockActorVtableOffset = 0x1312a748;
-inline constexpr std::uintptr_t kChestBlockActorDestructorOffset = 0x106ed7cc;
+inline constexpr std::uintptr_t kChestBlockActorVtableOffset = 0;  // not mapped for 1.26.60.4: fail closed
+inline constexpr std::uintptr_t kChestBlockActorDestructorOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16> kChestBlockActorDestructorSignature{
         0xfd, 0x7b, 0xbd, 0xa9, 0xf6, 0x57, 0x01, 0xa9,
         0xf4, 0x4f, 0x02, 0xa9, 0xfd, 0x03, 0x00, 0x91};
-inline constexpr std::uintptr_t kChestBlockActorDeletingDestructorOffset = 0x106ed8b4;
+inline constexpr std::uintptr_t kChestBlockActorDeletingDestructorOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16>
         kChestBlockActorDeletingDestructorSignature{
                 0xfd, 0x7b, 0xbe, 0xa9, 0xf3, 0x0b, 0x00, 0xf9,
                 0xfd, 0x03, 0x00, 0x91, 0xf3, 0x03, 0x00, 0xaa};
 inline constexpr std::size_t kChestBlockActorDestructorVtableSlot = 0;
 inline constexpr std::size_t kChestBlockActorDeletingDestructorVtableSlot = 1;
-// No unique 1.26.51.1 instruction sequence proved this layout. Keep the
+// No unique 1.26.60.4 instruction sequence proved this layout. Keep the
 // chest lifecycle hook disabled until its probe is remapped.
 inline constexpr std::uintptr_t kBlockActorPositionLayoutProbeOffset = 0;
 inline constexpr std::array<std::uint8_t, 24>
@@ -179,23 +179,23 @@ inline constexpr std::ptrdiff_t kBlockActorPositionOffset = 0x08;
 // Android arm64 layouts for the exact target build. The generated LeviLamina
 // headers use host-sized standard-library types, so these values are validated
 // independently against instructions in the Android binary before use.
-// Not uniquely mapped in 1.26.51.1; the chest validator fails closed while 0.
+// Not uniquely mapped in 1.26.60.4; the chest validator fails closed while 0.
 inline constexpr std::uintptr_t kLevelChunkGetPositionOffset = 0;
 inline constexpr std::array<std::uint8_t, 8> kLevelChunkGetPositionSignature{
         0x00, 0x40, 0x01, 0x91, 0xc0, 0x03, 0x5f, 0xd6};
-inline constexpr std::uintptr_t kLevelChunkGetLevelOffset = 0x1035e7fc;
+inline constexpr std::uintptr_t kLevelChunkGetLevelOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kLevelChunkGetLevelSignature{
         0x00, 0x14, 0x40, 0xf9, 0xc0, 0x03, 0x5f, 0xd6};
-inline constexpr std::uintptr_t kLevelChunkSubChunkLayoutProbeOffset = 0x1036bb90;
+inline constexpr std::uintptr_t kLevelChunkSubChunkLayoutProbeOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 32> kLevelChunkSubChunkLayoutProbeSignature{
         0x08, 0xa4, 0x50, 0xa9, 0x29, 0x01, 0x08, 0xcb,
         0x29, 0xfd, 0x43, 0x93, 0x2a, 0x7d, 0x0a, 0x9b,
         0x29, 0x1c, 0x40, 0x92, 0x5f, 0x01, 0x09, 0xeb,
         0x49, 0x04, 0x00, 0x54, 0x0a, 0x0d, 0x80, 0x52};
-inline constexpr std::uintptr_t kSubChunkAbsoluteIndexAccessorOffset = 0x1032ae38;
+inline constexpr std::uintptr_t kSubChunkAbsoluteIndexAccessorOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kSubChunkAbsoluteIndexAccessorSignature{
         0x00, 0x84, 0x41, 0x39, 0xc0, 0x03, 0x5f, 0xd6};
-inline constexpr std::uintptr_t kSubChunkStorageLayoutProbeOffset = 0x1032ae68;
+inline constexpr std::uintptr_t kSubChunkStorageLayoutProbeOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 48> kSubChunkStorageLayoutProbeSignature{
         0x28, 0x1c, 0x00, 0x12, 0x1f, 0x09, 0x00, 0x71,
         0xc1, 0x00, 0x00, 0x54, 0x08, 0x24, 0x43, 0xa9,
@@ -218,11 +218,11 @@ inline constexpr std::size_t kSubChunkStoragePaletteSnapshotVtableSlot = 22;
 // target. BlockType + 0xc8 is a HashedString; its Android libc++ string starts
 // eight bytes later. Both boundaries are independently proven by accessors.
 inline constexpr std::ptrdiff_t kBlockBlockTypeOffset = 0x68;
-inline constexpr std::uintptr_t kBlockTypeGetHashedNameOffset = 0x0fc0a14c;
+inline constexpr std::uintptr_t kBlockTypeGetHashedNameOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kBlockTypeGetHashedNameSignature{
         0x00, 0x20, 0x03, 0x91, 0xc0, 0x03, 0x5f, 0xd6};
 inline constexpr std::ptrdiff_t kBlockTypeHashedNameOffset = 0xc8;
-inline constexpr std::uintptr_t kHashedStringGetValueOffset = 0x1282d74c;
+inline constexpr std::uintptr_t kHashedStringGetValueOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kHashedStringGetValueSignature{
         0x00, 0x20, 0x00, 0x91, 0xc0, 0x03, 0x5f, 0xd6};
 inline constexpr std::ptrdiff_t kHashedStringValueOffset = 0x8;
@@ -237,11 +237,11 @@ struct SubChunkStorageDispatch {
 };
 
 // Palette-width dispatch tables are build-specific and were not uniquely
-// recovered from the 1.26.51.1 image. Keep the scanner fail-closed until all
+// recovered from the 1.26.60.4 image. Keep the scanner fail-closed until all
 // nine vtables and their virtual methods are revalidated.
 inline constexpr bool kOreTargetsAvailable = false;
 
-// The 1.26.51.1 dispatch records are intentionally empty until every palette
+// The 1.26.60.4 dispatch records are intentionally empty until every palette
 // width is revalidated. Unknown storage implementations are rejected before
 // any virtual method is called.
 inline constexpr std::array<SubChunkStorageDispatch, 9>
@@ -258,39 +258,39 @@ inline constexpr std::array<SubChunkStorageDispatch, 9>
         }};
 // Returns Actor::mBuiltInComponents.mAABBShapeComponent. AABB is the first
 // member of that component, so its address is also the collision AABB address.
-inline constexpr std::uintptr_t kActorGetAabbOffset = 0x0f5686c4;
+inline constexpr std::uintptr_t kActorGetAabbOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kActorGetAabbSignature{
         0x00, 0x08, 0x41, 0xf9, 0xc0, 0x03, 0x5f, 0xd6};
 
 // ClientLevel::getRuntimeActorList(). The method returns the complete active
 // Actor* list and is used once per presented frame, matching Horion's entity
 // enumeration model instead of relying on whichever actors a render pass saw.
-inline constexpr std::uintptr_t kLevelGetRuntimeActorListOffset = 0x0fb3a22c;
+inline constexpr std::uintptr_t kLevelGetRuntimeActorListOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kLevelGetRuntimeActorListSignature{
         0x00, 0x38, 0x42, 0xf9, 0x87, 0x22, 0x01, 0x14};
 inline constexpr std::size_t kLevelGetRuntimeActorListVtableSlot = 326;
 
 // ClientLevel::forEachPlayer(std::function<bool(Player&)>). This supplements
 // the general Actor* registry with the client-owned active-player registry.
-inline constexpr std::uintptr_t kLevelForEachPlayerOffset = 0x0fb39368;
+inline constexpr std::uintptr_t kLevelForEachPlayerOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kLevelForEachPlayerSignature{
         0xff, 0x83, 0x01, 0xd1, 0xfd, 0x7b, 0x04, 0xa9};
 inline constexpr std::size_t kLevelForEachPlayerVtableSlot = 223;
 
 // ClientLevel::getPrimaryLocalPlayer(). The returned Player* is excluded from
 // the overlay while every other active player remains visible.
-inline constexpr std::uintptr_t kLevelGetPrimaryLocalPlayerOffset = 0x0fb38d34;
+inline constexpr std::uintptr_t kLevelGetPrimaryLocalPlayerOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kLevelGetPrimaryLocalPlayerSignature{
         0x00, 0x0c, 0x42, 0xf9, 0x7d, 0x28, 0xfb, 0x17};
 inline constexpr std::size_t kLevelGetPrimaryLocalPlayerVtableSlot = 77;
 
 // The ClientLevel primary vtable. The exact vptr check prevents calling the
 // list getter through an unexpected ILevel implementation.
-inline constexpr std::uintptr_t kClientLevelVtableOffset = 0x12c6bc90;
+inline constexpr std::uintptr_t kClientLevelVtableOffset = 0x1394f510;
 
 // ILevel::getCurrentServerTick() on ClientLevel. Bedrock names this clock as
 // the server tick, but the overlay labels its measured rate as an estimate.
-inline constexpr std::uintptr_t kLevelGetCurrentServerTickOffset = 0x09f127d8;
+inline constexpr std::uintptr_t kLevelGetCurrentServerTickOffset = 0x0a33be00;
 inline constexpr std::array<std::uint8_t, 16> kLevelGetCurrentServerTickSignature{
         0xfd, 0x7b, 0xbf, 0xa9, 0xfd, 0x03, 0x00, 0x91,
         0x08, 0x00, 0x40, 0xf9, 0x08, 0x41, 0x41, 0xf9};
@@ -299,8 +299,8 @@ inline constexpr std::size_t kLevelGetCurrentServerTickVtableSlot = 81;
 // RakNetConnector::RakNetNetworkPeer::update() refreshes these native RTT
 // fields. The vtable slot is patched only after both target and signature
 // validation succeed.
-inline constexpr std::uintptr_t kRakNetPeerUpdateOffset = 0x0c66b484;
-inline constexpr std::uintptr_t kRakNetPeerUpdateVtableSlotOffset = 0x12e2f0d0;
+inline constexpr std::uintptr_t kRakNetPeerUpdateOffset = 0x0cc12bf8;
+inline constexpr std::uintptr_t kRakNetPeerUpdateVtableSlotOffset = 0x13b2ee38;
 inline constexpr std::array<std::uint8_t, 16> kRakNetPeerUpdateSignature{
         0xfd, 0x7b, 0xbc, 0xa9, 0xfc, 0x5f, 0x01, 0xa9,
         0xf6, 0x57, 0x02, 0xa9, 0xf4, 0x4f, 0x03, 0xa9};
@@ -310,17 +310,17 @@ inline constexpr std::ptrdiff_t kRakNetPeerAveragePingOffset = 0x108;
 // NetworkSystem owns a concrete PacketObserver for every serialized packet.
 // These two active slots expose the Packet and Bedrock-observed byte count
 // without changing, delaying, or replacing network data.
-// The observer RTTI/vtable was not uniquely recovered for 1.26.51.1. The
+// The observer RTTI/vtable was not uniquely recovered for 1.26.60.4. The
 // concrete incoming/outgoing slot addresses below are independently validated;
 // kPacketObserverVtableOffset remains zero and is not used as a prerequisite.
 inline constexpr std::uintptr_t kPacketObserverVtableOffset = 0;
-inline constexpr std::uintptr_t kPacketSentToOffset = 0x0c64d100;
-inline constexpr std::uintptr_t kPacketSentToVtableSlotOffset = 0x12e2f1d8;
+inline constexpr std::uintptr_t kPacketSentToOffset = 0x0cc4050c;
+inline constexpr std::uintptr_t kPacketSentToVtableSlotOffset = 0x13b39b30;
 inline constexpr std::array<std::uint8_t, 16> kPacketSentToSignature{
         0xfd, 0x7b, 0xbe, 0xa9, 0xf3, 0x0b, 0x00, 0xf9,
         0xfd, 0x03, 0x00, 0x91, 0x20, 0x04, 0x00, 0x0f};
-inline constexpr std::uintptr_t kPacketReceivedFromOffset = 0x0c64d144;
-inline constexpr std::uintptr_t kPacketReceivedFromVtableSlotOffset = 0x12e2f1e0;
+inline constexpr std::uintptr_t kPacketReceivedFromOffset = 0x0cc40550;
+inline constexpr std::uintptr_t kPacketReceivedFromVtableSlotOffset = 0x13b39b38;
 inline constexpr std::array<std::uint8_t, 16> kPacketReceivedFromSignature{
         0xfd, 0x7b, 0xbe, 0xa9, 0xf3, 0x0b, 0x00, 0xf9,
         0xfd, 0x03, 0x00, 0x91, 0x20, 0x04, 0x00, 0x0f};
@@ -329,23 +329,23 @@ inline constexpr std::size_t kPacketGetIdVtableSlot = 2;
 // Startup-only protocol discovery targets. Dobby asks the game's own packet
 // factory for each accepted ID and serializes the resulting default instance
 // into an isolated BinaryStream. Nothing produced by this sweep is sent.
-// Packet-factory and schema-writer targets are not proven on 1.26.51.1;
+// Packet-factory and schema-writer targets are not proven on 1.26.60.4;
 // zero makes the startup dumper fail closed.
 inline constexpr std::uintptr_t kPacketFactoryOffset = 0;
 inline constexpr std::array<std::uint8_t, 16> kPacketFactorySignature{
         0x1f, 0x7c, 0x05, 0x71, 0x88, 0x3a, 0x00, 0x54,
         0xe9, 0x03, 0x00, 0x2a, 0x8a, 0x5f, 0xfb, 0xd0};
-inline constexpr std::int32_t kPacketFactoryHighestId = 351;
+inline constexpr std::int32_t kPacketFactoryHighestId = 360;
 inline constexpr std::size_t kPacketGetNameVtableSlot = 3;
 inline constexpr std::size_t kPacketWriteVtableSlot = 8;
 inline constexpr std::size_t kPacketIsValidVtableSlot = 12;
 inline constexpr std::size_t kPacketSerializationModeVtableSlot = 13;
 
-inline constexpr std::uintptr_t kBinaryStreamConstructorOffset = 0x128041dc;
+inline constexpr std::uintptr_t kBinaryStreamConstructorOffset = 0x134c5300;
 inline constexpr std::array<std::uint8_t, 16> kBinaryStreamConstructorSignature{
         0x08, 0x53, 0x00, 0xd0, 0x08, 0xc1, 0x21, 0x91,
         0xe9, 0x03, 0x00, 0xaa, 0x0a, 0x24, 0x00, 0x91};
-inline constexpr std::uintptr_t kBinaryStreamVtableOffset = 0x13266870;
+inline constexpr std::uintptr_t kBinaryStreamVtableOffset = 0x13f8a160;
 inline constexpr std::size_t kBinaryStreamObjectSize = 0x48;
 
 struct ProtocolVirtualTarget {
@@ -426,15 +426,15 @@ inline constexpr std::array<std::uint8_t, 16> kLevelChunkDispatcherSignature{
 // IClientInstance&) as overridden by LevelRendererPlayer. The inherited slot
 // is used instead of a conditional block-entity pass, so every level render
 // supplies one live context without retaining any client-owned pointers.
-inline constexpr std::uintptr_t kLevelRenderFrameOffset = 0x0b29b1b4;
+inline constexpr std::uintptr_t kLevelRenderFrameOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::uintptr_t kLevelRenderFrameVtableSlotOffset =
-        0x12d5d440;
+        0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16>
         kLevelRenderFrameSignature{
                 0xff, 0x83, 0x02, 0xd1, 0xfd, 0x7b, 0x06, 0xa9,
                 0xf8, 0x5f, 0x07, 0xa9, 0xf6, 0x57, 0x08, 0xa9};
 inline constexpr std::uintptr_t kLevelRendererPlayerVtableOffset =
-        0x12d5d380;
+        0;  // not mapped for 1.26.60.4: fail closed
 
 // The Android implementation reads the live mce::Camera* directly from its
 // BaseActorRenderContext argument at x1 + 0x18 before copying three
@@ -442,7 +442,7 @@ inline constexpr std::uintptr_t kLevelRendererPlayerVtableOffset =
 // Android libc++ object layout, so the target instructions are validated.
 inline constexpr std::ptrdiff_t kLevelRenderCameraPointerOffset = 0x18;
 inline constexpr std::uintptr_t kLevelRenderCameraPointerProbeOffset =
-        0x0b288a18;
+        0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16>
         kLevelRenderCameraPointerProbeSignature{
                 0xc0, 0x0e, 0x40, 0xf9, 0xdd, 0xa6, 0x78, 0x95,
@@ -452,7 +452,7 @@ inline constexpr std::array<std::uint8_t, 16>
 // At this point x19 is the renderer, x22 is BaseActorRenderContext, and x21
 // is ViewRenderObject. All four overwritten instructions are replayable.
 inline constexpr std::uintptr_t kLevelRenderCameraCaptureOffset =
-        0x0b288a20;
+        0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16>
         kLevelRenderCameraCaptureSignature{
                 0x68, 0xc2, 0x44, 0xf9, 0xd8, 0x0e, 0x40, 0xf9,
@@ -463,7 +463,7 @@ inline constexpr std::array<std::uint8_t, 16>
 // level renderer, independent of generated cross-platform object headers.
 inline constexpr std::ptrdiff_t kLevelRendererCameraPositionOffset = 0x6f4;
 inline constexpr std::uintptr_t kLevelRendererCameraPositionUseProbeOffset =
-        0x0b29b2b0;
+        0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16>
         kLevelRendererCameraPositionUseProbeSignature{
                 0x01, 0x08, 0x40, 0x2d, 0x60, 0xf6, 0x46, 0xbd,
@@ -474,13 +474,13 @@ inline constexpr std::array<std::uint8_t, 16>
 // independent load-plus-Level-virtual-call before enabling capture.
 inline constexpr std::ptrdiff_t kLevelRendererLevelOffset = 0x958;
 inline constexpr std::uintptr_t kLevelRendererLevelLayoutProbeOffset =
-        0x0b27b144;
+        0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16>
         kLevelRendererLevelLayoutProbeSignature{
                 0x76, 0xae, 0x04, 0xf9, 0x76, 0x82, 0x25, 0x91,
                 0x60, 0x52, 0x82, 0x3d, 0x1f, 0xd1, 0x02, 0xf8};
 inline constexpr std::uintptr_t kLevelRendererLevelUseProbeOffset =
-        0x0b292d84;
+        0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16>
         kLevelRendererLevelUseProbeSignature{
                 0x60, 0xae, 0x44, 0xf9, 0x08, 0x00, 0x40, 0xf9,
@@ -497,8 +497,8 @@ inline constexpr std::uintptr_t kSubChunkVtableOffset = 0;
 
 // LoopbackPacketSender::send(Packet&) is the client outbound vtable path. It
 // safely delegates to sendToServer without requiring an inline trampoline.
-inline constexpr std::uintptr_t kLoopbackSendOffset = 0x0c68f9d8;
-inline constexpr std::uintptr_t kLoopbackSendVtableSlotOffset = 0x12e2f5c0;
+inline constexpr std::uintptr_t kLoopbackSendOffset = 0x0cc8934c;
+inline constexpr std::uintptr_t kLoopbackSendVtableSlotOffset = 0x13b3ac18;
 inline constexpr std::array<std::uint8_t, 16> kLoopbackSendSignature{
         0xff, 0x43, 0x01, 0xd1, 0xfd, 0x7b, 0x03, 0xa9,
         0xf3, 0x23, 0x00, 0xf9, 0xfd, 0xc3, 0x00, 0x91};
@@ -513,21 +513,21 @@ inline constexpr std::uintptr_t kSubChunkPacketDataSize = 576;
 
 // BaseActorRenderContext::getProjectionMatrix(). This validates the context ->
 // ScreenContext -> Camera path used by the passive overlay capture.
-inline constexpr std::uintptr_t kProjectionMatrixGetterOffset = 0x0a965d30;
+inline constexpr std::uintptr_t kProjectionMatrixGetterOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 16> kProjectionMatrixGetterSignature{
         0x08, 0x14, 0x40, 0xf9, 0x08, 0x0d, 0x40, 0xf9,
         0x00, 0x41, 0x02, 0x91, 0xc0, 0x03, 0x5f, 0xd6};
 
 // BaseActorRenderContext::getViewMatrix(). It returns the Camera itself because
 // the view MatrixStack is the first camera member.
-inline constexpr std::uintptr_t kViewMatrixGetterOffset = 0x0a965d40;
+inline constexpr std::uintptr_t kViewMatrixGetterOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 12> kViewMatrixGetterSignature{
         0x08, 0x14, 0x40, 0xf9, 0x00, 0x0d, 0x40, 0xf9,
         0xc0, 0x03, 0x5f, 0xd6};
 
 // BaseActorRenderContext::getCameraPosition(). Actor AABBs use world
 // coordinates while Camera::mPosition is render-relative on this target.
-inline constexpr std::uintptr_t kCameraPositionGetterOffset = 0x0a965d0c;
+inline constexpr std::uintptr_t kCameraPositionGetterOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 12> kCameraPositionGetterSignature{
         0x08, 0x54, 0x40, 0xf9, 0x00, 0xd1, 0x00, 0x91,
         0xc0, 0x03, 0x5f, 0xd6};
@@ -542,7 +542,7 @@ inline constexpr std::ptrdiff_t kRenderCameraStatePositionOffset = 0x34;
 // Actor::getLevel() at image offset 0x0f58a1b4 loads this exact member.
 // Nearby code confirms that 0x1c8 belongs to a different actor field.
 inline constexpr std::ptrdiff_t kActorLevelOffset = 0x1d0;
-inline constexpr std::uintptr_t kActorGetLevelOffset = 0x0f58a1b4;
+inline constexpr std::uintptr_t kActorGetLevelOffset = 0;  // not mapped for 1.26.60.4: fail closed
 inline constexpr std::array<std::uint8_t, 8> kActorGetLevelSignature{
         0x00, 0xe8, 0x40, 0xf9, 0xc0, 0x03, 0x5f, 0xd6};
 inline constexpr std::ptrdiff_t kScreenContextCameraOffset = 0x18;

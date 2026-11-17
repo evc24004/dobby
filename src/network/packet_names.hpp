@@ -11,8 +11,9 @@ struct PacketNameEntry {
     std::string_view name;
 };
 
-// Generated from LeviLamina's MinecraftPacketIds.h for the supported Bedrock target.
-inline constexpr std::array<PacketNameEntry, 252> kPacketNames{{
+// Generated from LeviLamina's MinecraftPacketIds.h, then extended for the
+// supported Bedrock 1.26.60.4 target (protocol 2225) as cited below.
+inline constexpr std::array<PacketNameEntry, 264> kPacketNames{{
         PacketNameEntry{0, "KeepAlive"},
         PacketNameEntry{1, "Login"},
         PacketNameEntry{2, "PlayStatus"},
@@ -266,6 +267,23 @@ inline constexpr std::array<PacketNameEntry, 252> kPacketNames{{
         PacketNameEntry{347, "ServerPresenceInfo"},
         // Mojang protocol 2193 docs; EndId in the older header was a sentinel.
         PacketNameEntry{348, "ClientboundUpdateSoundDataPacket"},
+        // IDs 349-360: Mojang bedrock-protocol-docs tag v1.26.60 (commit
+        // 0879ab5c, json/MinecraftPacketIds.json, protocol 2225). The docs
+        // omit 354, 355, and 357; those names are the getName() strings of
+        // the matching getId() vtables in the 1.26.60.4 client image
+        // (tools/packet_ids_from_image.py).
+        PacketNameEntry{349, "SendPartyDestinationCookie"},
+        PacketNameEntry{350, "PartyDestinationCookieResponse"},
+        PacketNameEntry{351, "SetPlayerFurnaceOptions"},
+        PacketNameEntry{352, "RecordStarted"},
+        PacketNameEntry{353, "ClientboundMatchmakingState"},
+        PacketNameEntry{354, "ServerboundStonecutterSetRecipe"},
+        PacketNameEntry{355, "ClientboundStonecutterSetRecipe"},
+        PacketNameEntry{356, "ServerboundMatchmakingCancel"},
+        PacketNameEntry{357, "SetPassengerOfBlock"},
+        PacketNameEntry{358, "ServerboundCursorItemDrag"},
+        PacketNameEntry{359, "ClientboundPlayAudioContent"},
+        PacketNameEntry{360, "ServerboundRegisterAudioContent"},
 }};
 
 inline constexpr std::string_view packetName(std::int32_t id) {

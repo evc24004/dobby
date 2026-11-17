@@ -731,7 +731,7 @@ void installChestEspHook() {
                 : "ERROR: loaded chunk metrics unavailable; lifecycle target mismatch");
         runtimeState().setChestEspAvailable(false);
         runtimeState().setOreEspAvailable(false);
-        logLine("chest ESP: disabled; 1.26.51.1 BlockActor position probe is unverified");
+        logLine("chest ESP: disabled; 1.26.60.4 BlockActor position probe is unverified");
         return;
     }
     const MinecraftImage image = findMinecraftImage();

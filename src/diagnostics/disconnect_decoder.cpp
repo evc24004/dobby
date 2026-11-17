@@ -19,10 +19,11 @@ struct DisconnectIdentity {
 };
 
 // Connection::DisconnectFailReason is a contiguous enum in Minecraft
-// 1.26.51.1. Names come from libminecraftpe's enum schema and codewords come
+// 1.26.60.4 (1.26.51.1 plus SubClientLoginNotBound at 150, which has no codeword
+// asset row). Names come from libminecraftpe's enum schema and codewords come
 // from the matching disconnection_error_messaging.json asset. The array index
 // is the observed integer passed to ClientNetworkHandler::onDisconnect.
-constexpr std::array<DisconnectIdentity, 150> identities{{
+constexpr std::array<DisconnectIdentity, 151> identities{{
     {"Unknown", "Creeper"},
     {"CantConnectNoInternet", "NetherNet"},
     {"NoPermissions", "Spyglass"},
@@ -173,6 +174,7 @@ constexpr std::array<DisconnectIdentity, 150> identities{{
     {"EditorNotAllowed", "Emerald"},
     {"MissingStructureData", "Boat"},
     {"UnsupportedTransport", "Terracotta"},
+    {"SubClientLoginNotBound", "Terracotta"},
 }};
 
 struct DecodedString {

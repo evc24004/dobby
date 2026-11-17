@@ -168,7 +168,7 @@ void installChunkMetricsHooks() {
         target::kSubChunkRequestVtableOffset == 0 ||
         target::kLevelChunkDispatcherOffset == 0 ||
         target::kSubChunkDispatcherOffset == 0) {
-        logLine("chunk metrics: packet rate/pending paths disabled; 1.26.51.1 dispatch targets are unverified");
+        logLine("chunk metrics: packet rate/pending paths disabled; 1.26.60.4 dispatch targets are unverified");
         return;
     }
     const auto image = findMinecraftImage();
