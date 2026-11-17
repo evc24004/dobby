@@ -690,7 +690,7 @@ void dumpProtocolOnStartup() {
         return;
     if (target::kPacketFactoryOffset == 0 ||
         target::kPacketSchemaWriterVtableOffset == 0) {
-        logLine("protocol dump: disabled; 1.26.51.1 factory/schema targets are unverified");
+        logLine("protocol dump: disabled; 1.26.60.4 factory/schema targets are unverified");
         recordLifecycleEvent("protocol_dump_disabled", "target mapping pending");
         return;
     }

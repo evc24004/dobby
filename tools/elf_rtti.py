@@ -44,12 +44,26 @@ class Elf64:
             raise ValueError("expected a little-endian ELF64 image")
         self.data = data
         self.sections = self._read_sections()
-        self.relocations = self._read_relocations()
-        self.relative_by_target = {
-            relocation.target: relocation.addend
-            for relocation in self.relocations
-            if relocation.kind == R_AARCH64_RELATIVE
-        }
+        self._relocations: list[Relocation] | None = None
+        self._relative_by_target: dict[int, int] | None = None
+
+    @property
+    def relocations(self) -> list[Relocation]:
+        # Parsed on first use: a full Bedrock image has about a million
+        # entries, and boundary-only tools never need them.
+        if self._relocations is None:
+            self._relocations = self._read_relocations()
+        return self._relocations
+
+    @property
+    def relative_by_target(self) -> dict[int, int]:
+        if self._relative_by_target is None:
+            self._relative_by_target = {
+                relocation.target: relocation.addend
+                for relocation in self.relocations
+                if relocation.kind == R_AARCH64_RELATIVE
+            }
+        return self._relative_by_target
 
     def _read_sections(self) -> list[Section]:
         section_offset = struct.unpack_from("<Q", self.data, 0x28)[0]
